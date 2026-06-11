@@ -1,0 +1,35 @@
+{
+  "name": "saturn-pr-reviewer",
+  "version": "1.0.0",
+  "description": "Saturn - an always-on, repo-agnostic security & privacy PR reviewer for Azure DevOps, powered by the GitHub Copilot CLI.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest",
+    "saturn": "tsx src/saturnDashboard.ts",
+    "dashboard": "tsx src/saturnDashboard.ts",
+    "review": "tsx src/start.ts",
+    "deploy": "node scripts/deploySaturn.cjs",
+    "install-autostart": "node scripts/installAutostart.cjs"
+  },
+  "dependencies": {
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@jest/globals": "^30.0.2",
+    "@swc/core": "^1.7.26",
+    "@swc/jest": "^0.2.37",
+    "@types/node": "^22.13.14",
+    "esbuild": "^0.24.0",
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0",
+    "jest": "^30.0.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.10.0"
+  }
+}
