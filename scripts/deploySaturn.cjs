@@ -58,6 +58,21 @@ for (const bundle of bundles) {
   );
 }
 
+// Copy the operator's .env (Saturn's configuration) next to the bundle so config.ts finds it regardless of
+// the launcher's working directory. Keep any existing deployed .env if the source repo has none.
+const sourceEnvFile = path.join(packageRoot, ".env");
+const deployedEnvFile = path.join(deployDir, ".env");
+if (existsSync(sourceEnvFile)) {
+  copyFileSync(sourceEnvFile, deployedEnvFile);
+  console.log(`  copied .env -> ${deployedEnvFile}`);
+} else if (existsSync(deployedEnvFile)) {
+  console.log(`  kept existing .env at ${deployedEnvFile}`);
+} else {
+  console.warn(
+    `  WARNING: no .env at ${sourceEnvFile} or ${deployedEnvFile} - Saturn will exit on startup until one exists (see .env.example).`,
+  );
+}
+
 console.log("[2/3] Writing hidden launcher...");
 const dashboardBundle = path.join(deployDir, "saturnDashboard.cjs");
 const launcherVbs = path.join(deployDir, "saturn-launch.vbs");

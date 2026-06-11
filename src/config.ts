@@ -1,4 +1,7 @@
-/** Azure DevOps coordinates for the repository Saturn reviews. */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+
+/** Azure DevOps coordinates of the repository Saturn reviews. */
 export interface AzureDevOpsConfig {
   readonly host: string;
   readonly organization: string;
@@ -7,30 +10,97 @@ export interface AzureDevOpsConfig {
   readonly repositoryName: string;
 }
 
-function envOrDefault(name: string, fallback: string): string {
-  const value = process.env[name];
-  return value !== undefined && value.trim() !== "" ? value : fallback;
+// Matches a single `KEY=VALUE` line in a `.env` file (with an optional leading `export `). Group 1 is the
+// key, group 2 is the raw value (everything after `=`); surrounding quotes are stripped separately.
+const ENV_LINE_PATTERN = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/;
+
+/** Parse the contents of a `.env` file into key/value pairs, skipping blank and `#` comment lines. */
+function parseEnvFile(contents: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) {
+      continue;
+    }
+    const match = ENV_LINE_PATTERN.exec(line);
+    if (match === null) {
+      continue;
+    }
+    const key = match[1];
+    let value = match[2].trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    values[key] = value;
+  }
+  return values;
 }
 
 /**
- * Azure DevOps identity for the repository Saturn reviews. Every field is overridable via an environment
- * variable so the same agent can target any Azure DevOps repository; the defaults point at office-bohemia.
- *
- *   SATURN_ADO_HOST       REST host (default `dev.azure.com`)
- *   SATURN_ADO_ORG        organization (default `office`)
- *   SATURN_ADO_PROJECT    project (default `OC`)
- *   SATURN_ADO_REPO_ID    repository GUID (default office-bohemia's)
- *   SATURN_ADO_REPO_NAME  repository name (default `office-bohemia`)
+ * Populate `process.env` from the first `.env` file found, WITHOUT overriding variables already present in
+ * the real environment (so explicit env vars and test overrides always win). Search order:
+ *   1. `SATURN_ENV_FILE` (an explicit path), if set.
+ *   2. `<cwd>/.env`              - the common case when running from the package root.
+ *   3. `<entry-script dir>/.env` - so a deployed bundle finds its `.env` even when the launcher does not
+ *      set a working directory.
+ */
+function loadEnvFile(): void {
+  const candidatePaths: string[] = [];
+  const explicitPath = process.env.SATURN_ENV_FILE;
+  if (explicitPath !== undefined && explicitPath.trim() !== "") {
+    candidatePaths.push(explicitPath.trim());
+  }
+  candidatePaths.push(join(process.cwd(), ".env"));
+  const entryScript = process.argv.at(1);
+  if (entryScript !== undefined && entryScript !== "") {
+    candidatePaths.push(join(dirname(entryScript), ".env"));
+  }
+  for (const candidatePath of candidatePaths) {
+    if (!existsSync(candidatePath)) {
+      continue;
+    }
+    const parsed = parseEnvFile(readFileSync(candidatePath, "utf8"));
+    for (const [key, value] of Object.entries(parsed)) {
+      if (process.env[key] === undefined) {
+        process.env[key] = value;
+      }
+    }
+    return;
+  }
+}
+
+loadEnvFile();
+
+/** Read a required configuration value from the environment, throwing a clear error if it is missing. */
+function requireEnv(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(
+      `Saturn configuration error: ${name} is not set. Copy .env.example to .env and fill in the Azure DevOps coordinates of the repository to review.`,
+    );
+  }
+  return value.trim();
+}
+
+/** Read an optional configuration value from the environment, falling back to a default. */
+function envOrDefault(name: string, fallback: string): string {
+  const value = process.env[name];
+  return value !== undefined && value.trim() !== "" ? value.trim() : fallback;
+}
+
+/**
+ * Azure DevOps identity for the repository Saturn reviews, read from the environment (see `.env.example`).
+ * Every field is overridable so the same agent can target any Azure DevOps repository.
  */
 export const AZURE_DEVOPS_CONFIG: AzureDevOpsConfig = {
   host: envOrDefault("SATURN_ADO_HOST", "dev.azure.com"),
-  organization: envOrDefault("SATURN_ADO_ORG", "office"),
-  project: envOrDefault("SATURN_ADO_PROJECT", "OC"),
-  repositoryId: envOrDefault(
-    "SATURN_ADO_REPO_ID",
-    "74031860-e0cd-45a1-913f-10bbf3f82555",
-  ),
-  repositoryName: envOrDefault("SATURN_ADO_REPO_NAME", "office-bohemia"),
+  organization: requireEnv("SATURN_ADO_ORG"),
+  project: requireEnv("SATURN_ADO_PROJECT"),
+  repositoryId: requireEnv("SATURN_ADO_REPO_ID"),
+  repositoryName: requireEnv("SATURN_ADO_REPO_NAME"),
 };
 
 /** Build an absolute Azure DevOps Git REST URL for a repository-relative API path. */

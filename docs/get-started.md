@@ -15,13 +15,24 @@ Saturn shells out to all three; none are bundled, and none are tied to a specifi
 
 ```bash
 npm ci
+cp .env.example .env   # then fill in your repo's coordinates (step 3)
 npm run build   # typecheck
 npm test
 ```
 
 ## 3. Point it at your repository
 
-Set these environment variables (defaults target office-bohemia):
+Edit your `.env` (copied from [`.env.example`](../.env.example) in step 2); Saturn loads it automatically. The Azure DevOps coordinates are **required**, the rest optional. Real environment variables take precedence over `.env`. A minimal `.env`:
+
+```dotenv
+SATURN_ADO_HOST=dev.azure.com
+SATURN_ADO_ORG=contoso
+SATURN_ADO_PROJECT=MyProject
+SATURN_ADO_REPO_ID=00000000-0000-0000-0000-000000000000
+SATURN_ADO_REPO_NAME=my-repo
+```
+
+The full set of variables (with examples):
 
 | Variable               | Example                                     | Notes                                       |
 | ---------------------- | ------------------------------------------- | ------------------------------------------- |

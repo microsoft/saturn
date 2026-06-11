@@ -15,7 +15,7 @@ Saturn is a single Node process: an HTTP **dashboard server** that hosts a contr
 | `ado.ts`               | Azure DevOps REST: list PRs, iterations, changed files, blobs, threads, post/reactivate/edit.  |
 | `git.ts`               | Managed clone of the target repo (gives the model a working tree), master refresh.             |
 | `saturnStore.ts`       | JSON persistence under `~/.saturn/` (reviews, totals, feedback).                               |
-| `config.ts`            | Env-driven Azure DevOps coordinates and URL/feedback-link builders.                            |
+| `config.ts`            | Loads `.env`, exposes the Azure DevOps coordinates, and builds URL/feedback links.             |
 | `util.ts`              | Process spawning and logging helpers.                                                          |
 
 ## Data flow

@@ -5,6 +5,7 @@ lib/
 .eslintcache
 .deploy-test/
 *.log
+.env
 .vs/
 .idea/
 .DS_Store

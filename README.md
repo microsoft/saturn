@@ -29,21 +29,22 @@ The only npm runtime dependency is `zod`.
 
 ## Configuration
 
-Defaults point at office-bohemia; override via environment variables to target any Azure DevOps repo:
+Saturn reads its configuration from a **`.env` file** (copy [`.env.example`](.env.example) to `.env`) or from real environment variables. `config.ts` loads the first `.env` it finds — the path in `SATURN_ENV_FILE`, then the working directory, then the running bundle's directory — and never overrides variables already set in the environment. The Azure DevOps coordinates are **required** (Saturn exits at startup if any are missing); everything else has a default.
 
 | Env var                | Default                | Meaning                                         |
 | ---------------------- | ---------------------- | ----------------------------------------------- |
 | `SATURN_ADO_HOST`      | `dev.azure.com`        | REST host                                       |
-| `SATURN_ADO_ORG`       | `office`               | organization                                    |
-| `SATURN_ADO_PROJECT`   | `OC`                   | project                                         |
-| `SATURN_ADO_REPO_ID`   | office-bohemia GUID    | repository GUID                                 |
-| `SATURN_ADO_REPO_NAME` | `office-bohemia`       | repository name                                 |
+| `SATURN_ADO_ORG`       | **required**           | organization                                    |
+| `SATURN_ADO_PROJECT`   | **required**           | project                                         |
+| `SATURN_ADO_REPO_ID`   | **required**           | repository GUID                                 |
+| `SATURN_ADO_REPO_NAME` | **required**           | repository name                                 |
 | `SATURN_CLONE_URL`     | derived                | explicit clone URL (optional)                   |
 | `SATURN_CLONE_DIR`     | `<deploy>/repo/<repo>` | managed clone location                          |
 | `SATURN_OWNER`         | git `user.email`       | identity allowed to Start/Stop the agent        |
 | `SATURN_FEEDBACK_URL`  | local dashboard        | base URL of the feedback page (set when hosted) |
 | `SATURN_MODEL`         | `claude-opus-4.8`      | Copilot CLI model                               |
 | `SATURN_DEPLOY_DIR`    | `C:\saturn` (Win)      | deploy output directory                         |
+| `SATURN_ENV_FILE`      | (auto-discovered)      | explicit path to the `.env` file                |
 
 See [docs/get-started.md](docs/get-started.md) for the full list and examples.
 
