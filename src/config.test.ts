@@ -5,6 +5,7 @@ import {
   buildCommentWithDisclaimer,
   buildPullRequestWebUrl,
   buildRepositoryApiUrl,
+  parseRepoUrl,
 } from "./config";
 
 describe("config", () => {
@@ -40,5 +41,47 @@ describe("config", () => {
 
   it("exposes a stable idempotency marker", () => {
     expect(BOT_REVIEW_MARKER).toBe("<!-- saturn-review:v1 -->");
+  });
+});
+
+describe("parseRepoUrl", () => {
+  it("parses a modern dev.azure.com repo URL", () => {
+    expect(
+      parseRepoUrl("https://dev.azure.com/contoso/MyProject/_git/my-repo"),
+    ).toEqual({
+      organization: "contoso",
+      project: "MyProject",
+      repositoryName: "my-repo",
+    });
+  });
+
+  it("parses a legacy visualstudio.com repo URL (org from subdomain)", () => {
+    expect(
+      parseRepoUrl("https://contoso.visualstudio.com/MyProject/_git/my-repo"),
+    ).toEqual({
+      organization: "contoso",
+      project: "MyProject",
+      repositoryName: "my-repo",
+    });
+  });
+
+  it("decodes URL-encoded segments", () => {
+    expect(
+      parseRepoUrl("https://dev.azure.com/contoso/My%20Project/_git/my%20repo"),
+    ).toEqual({
+      organization: "contoso",
+      project: "My Project",
+      repositoryName: "my repo",
+    });
+  });
+
+  it("returns undefined when the URL has no _git segment", () => {
+    expect(
+      parseRepoUrl("https://dev.azure.com/contoso/MyProject"),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for a non-URL string", () => {
+    expect(parseRepoUrl("not a url")).toBeUndefined();
   });
 });

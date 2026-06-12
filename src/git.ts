@@ -28,13 +28,13 @@ export function defaultManagedCloneDir(): string {
 }
 
 function repoCloneUrl(): string {
-  const override = process.env.SATURN_CLONE_URL;
+  const override = process.env.SATURN_CLONE_URL ?? process.env.SATURN_REPO_URL;
   if (override !== undefined && override.trim() !== "") {
-    return override;
+    return override.trim();
   }
 
-  const { organization, project, repositoryName } = AZURE_DEVOPS_CONFIG;
-  return `https://${organization}.visualstudio.com/${project}/_git/${repositoryName}`;
+  const { host, organization, project, repositoryName } = AZURE_DEVOPS_CONFIG;
+  return `https://${host}/${organization}/${project}/_git/${repositoryName}`;
 }
 
 /**
@@ -47,9 +47,10 @@ export async function updateRepoFromMaster(
   logger: Logger,
 ): Promise<void> {
   const env = nonInteractiveGitEnv();
+  const branch = AZURE_DEVOPS_CONFIG.defaultBranch;
   const fetchResult = await runCommandAsync(
     "git",
-    ["-C", repoRoot, "fetch", "origin", "master"],
+    ["-C", repoRoot, "fetch", "origin", branch],
     {
       env,
       timeoutMs: 300_000,
@@ -58,26 +59,26 @@ export async function updateRepoFromMaster(
   if (fetchResult.status !== 0) {
     const reason = fetchResult.stderr.trim();
     logger.warn(
-      `Could not fetch origin/master (${reason === "" ? "unknown error" : reason}); continuing.`,
+      `Could not fetch origin/${branch} (${reason === "" ? "unknown error" : reason}); continuing.`,
     );
     return;
   }
 
-  logger.info("Updated origin/master for review context.");
+  logger.info(`Updated origin/${branch} for review context.`);
 
   const pullResult = await runCommandAsync(
     "git",
-    ["-C", repoRoot, "pull", "--ff-only", "origin", "master"],
+    ["-C", repoRoot, "pull", "--ff-only", "origin", branch],
     {
       env,
       timeoutMs: 300_000,
     },
   );
   if (pullResult.status === 0) {
-    logger.info("Fast-forwarded the current branch to origin/master.");
+    logger.info(`Fast-forwarded the current branch to origin/${branch}.`);
   } else {
     logger.info(
-      "Current branch was not fast-forwarded (feature branch or diverged); using fetched origin/master.",
+      `Current branch was not fast-forwarded (feature branch or diverged); using fetched origin/${branch}.`,
     );
   }
 }
@@ -121,12 +122,18 @@ export async function ensureManagedClone(
   }
 
   if (updateMaster) {
-    logger.info(`Using managed clone at ${targetDir}; refreshing master.`);
-    // The bot never commits in this clone, so forcing it back onto master before updating is safe.
-    await runCommandAsync("git", ["-C", targetDir, "checkout", "master"], {
-      env,
-      timeoutMs: 120_000,
-    });
+    logger.info(
+      `Using managed clone at ${targetDir}; refreshing ${AZURE_DEVOPS_CONFIG.defaultBranch}.`,
+    );
+    // The bot never commits in this clone, so forcing it back onto the default branch before updating is safe.
+    await runCommandAsync(
+      "git",
+      ["-C", targetDir, "checkout", AZURE_DEVOPS_CONFIG.defaultBranch],
+      {
+        env,
+        timeoutMs: 120_000,
+      },
+    );
     await updateRepoFromMaster(targetDir, logger);
   } else {
     logger.info(

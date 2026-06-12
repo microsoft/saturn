@@ -8,6 +8,8 @@ export interface AzureDevOpsConfig {
   readonly project: string;
   readonly repositoryId: string;
   readonly repositoryName: string;
+  /** Default branch to track for review context (e.g. `master` or `main`). */
+  readonly defaultBranch: string;
 }
 
 // Matches a single `KEY=VALUE` line in a `.env` file (with an optional leading `export `). Group 1 is the
@@ -92,15 +94,67 @@ function envOrDefault(name: string, fallback: string): string {
 }
 
 /**
- * Azure DevOps identity for the repository Saturn reviews, read from the environment (see `.env.example`).
- * Every field is overridable so the same agent can target any Azure DevOps repository.
+ * Parse an Azure DevOps repository URL into its coordinates. Supports both the modern and legacy forms:
+ *   https://dev.azure.com/{org}/{project}/_git/{repo}
+ *   https://{org}.visualstudio.com[/{collection}]/{project}/_git/{repo}
+ * Returns undefined if the string is not a recognizable repo URL.
+ */
+export function parseRepoUrl(
+  rawUrl: string,
+):
+  | { organization: string; project: string; repositoryName: string }
+  | undefined {
+  const parsed = URL.parse(rawUrl);
+  if (parsed === null) {
+    return undefined;
+  }
+  const segments = parsed.pathname
+    .split("/")
+    .map((segment) => decodeURIComponent(segment))
+    .filter((segment) => segment !== "");
+  const gitIndex = segments.indexOf("_git");
+  if (gitIndex < 1 || gitIndex + 1 >= segments.length) {
+    return undefined;
+  }
+  const repositoryName = segments[gitIndex + 1];
+  const project = segments[gitIndex - 1];
+  const hostname = parsed.hostname.toLowerCase();
+  const organization = hostname.endsWith(".visualstudio.com")
+    ? hostname.slice(0, hostname.length - ".visualstudio.com".length)
+    : segments[0];
+  if (organization === "" || project === "" || repositoryName === "") {
+    return undefined;
+  }
+  return { organization, project, repositoryName };
+}
+
+// SATURN_REPO_URL is the simplest way to point Saturn at a repo: just the repo's URL, parsed into
+// org/project/repo. The individual SATURN_ADO_* variables remain supported as overrides/fallback.
+const repoUrl = (process.env.SATURN_REPO_URL ?? "").trim();
+const parsedRepo = repoUrl !== "" ? parseRepoUrl(repoUrl) : undefined;
+if (repoUrl !== "" && parsedRepo === undefined) {
+  throw new Error(
+    `Saturn configuration error: SATURN_REPO_URL ("${repoUrl}") is not a recognizable Azure DevOps repo URL (expected .../_git/<repo>).`,
+  );
+}
+const adoOrganization =
+  parsedRepo?.organization ?? requireEnv("SATURN_ADO_ORG");
+const adoProject = parsedRepo?.project ?? requireEnv("SATURN_ADO_PROJECT");
+const adoRepositoryName =
+  parsedRepo?.repositoryName ?? requireEnv("SATURN_ADO_REPO_NAME");
+
+/**
+ * Azure DevOps identity for the repository Saturn reviews. Simplest setup: SATURN_REPO_URL (the repo's URL)
+ * plus SATURN_ADO_DEFAULT_BRANCH. The individual SATURN_ADO_* vars are still honored as overrides.
  */
 export const AZURE_DEVOPS_CONFIG: AzureDevOpsConfig = {
   host: envOrDefault("SATURN_ADO_HOST", "dev.azure.com"),
-  organization: requireEnv("SATURN_ADO_ORG"),
-  project: requireEnv("SATURN_ADO_PROJECT"),
-  repositoryId: requireEnv("SATURN_ADO_REPO_ID"),
-  repositoryName: requireEnv("SATURN_ADO_REPO_NAME"),
+  organization: adoOrganization,
+  project: adoProject,
+  repositoryName: adoRepositoryName,
+  // The REST API accepts the repo name in place of the GUID, so the GUID is optional (override via SATURN_ADO_REPO_ID).
+  repositoryId: envOrDefault("SATURN_ADO_REPO_ID", adoRepositoryName),
+  defaultBranch: envOrDefault("SATURN_ADO_DEFAULT_BRANCH", "master"),
 };
 
 /** Build an absolute Azure DevOps Git REST URL for a repository-relative API path. */
@@ -170,7 +224,9 @@ export function buildFeedbackUrl(
  * SATURN_ENABLE_FEEDBACK=true.
  */
 export function isFeedbackEnabled(): boolean {
-  return (process.env.SATURN_ENABLE_FEEDBACK ?? "").trim().toLowerCase() === "true";
+  return (
+    (process.env.SATURN_ENABLE_FEEDBACK ?? "").trim().toLowerCase() === "true"
+  );
 }
 
 /**
