@@ -164,6 +164,35 @@ export function buildFeedbackUrl(
   return `${base}${separator}prId=${String(pullRequestId)}&commentId=${String(commentId)}`;
 }
 
+/**
+ * Whether feedback collection is enabled. Off by default until authenticated user attribution is in place, so
+ * Saturn's comments carry no feedback link and the feedback page/endpoint are disabled. Enable with
+ * SATURN_ENABLE_FEEDBACK=true.
+ */
+export function isFeedbackEnabled(): boolean {
+  return (process.env.SATURN_ENABLE_FEEDBACK ?? "").trim().toLowerCase() === "true";
+}
+
+/**
+ * Pull request authors (display names) who have opted out of Saturn reviews; Saturn skips any PR created by a
+ * matching author. Populate via SATURN_OPT_OUT_AUTHORS (comma-separated display names).
+ */
+const DEFAULT_OPT_OUT_AUTHORS: readonly string[] = [];
+
+export const OPT_OUT_AUTHORS: readonly string[] = [
+  ...DEFAULT_OPT_OUT_AUTHORS,
+  ...(process.env.SATURN_OPT_OUT_AUTHORS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== ""),
+];
+
+/** True when the given PR author (display name) has opted out of Saturn reviews. */
+export function isOptedOutAuthor(authorName: string): boolean {
+  const normalized = authorName.trim().toLowerCase();
+  return OPT_OUT_AUTHORS.some((entry) => entry.toLowerCase() === normalized);
+}
+
 /** Build the attribution/disclaimer line shown at the top of each Saturn comment. */
 export function buildBotDisclaimer(onBehalfOf: string): string {
   return (

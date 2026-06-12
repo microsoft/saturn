@@ -1,4 +1,5 @@
 import { getPullRequestById, listActivePullRequests } from './ado';
+import { isOptedOutAuthor } from './config';
 import { ensureAdoMcpServer, resolveCopilotCli } from './copilot';
 import { ensureManagedClone, installRepoDependencies, updateRepoFromMaster } from './git';
 import type { PullRequestSummary } from './review';
@@ -49,6 +50,7 @@ export interface SaturnRunSummary {
 function selectCandidates(activePullRequests: readonly PullRequestSummary[]): readonly PullRequestSummary[] {
   return [...activePullRequests]
     .filter((pullRequest) => !pullRequest.isDraft)
+    .filter((pullRequest) => !isOptedOutAuthor(pullRequest.authorName))
     .sort((left, right) => right.pullRequestId - left.pullRequestId);
 }
 

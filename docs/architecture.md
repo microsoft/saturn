@@ -63,8 +63,10 @@ The Copilot CLI runs with its working directory set to the **managed clone**, so
 
 Locally the dashboard is single-user (localhost). To let other corpnet users view it and submit feedback while keeping the agent in your context and Start/Stop limited to you:
 
-1. Containerize and deploy behind **Azure AD EasyAuth** (App Service or Container Apps).
-2. Set `SATURN_OWNER` to your identity and `SATURN_FEEDBACK_URL` to the hosted `/feedback` URL.
-3. Persist `~/.saturn/` (e.g., an Azure Files mount) so history/feedback survive restarts.
+1. Build the image and deploy behind **Azure AD Easy Auth** (App Service or Container Apps) - see [`Dockerfile`](../Dockerfile) and [`scripts/deploy-azure.ps1`](../scripts/deploy-azure.ps1).
+2. Set `SATURN_OWNER` to your signed-in identity (UPN). Easy Auth injects the `x-ms-client-principal-name` header, which Saturn trusts for per-user identity and owner gating; a relayed request is otherwise treated as a non-owner viewer automatically.
+3. Set `SATURN_FEEDBACK_URL` to the hosted `/feedback` URL and persist `~/.saturn/` (e.g. an Azure Files mount) so history/feedback survive restarts.
 
-The agent still runs as one identity (its git/Azure CLI/Copilot credentials); EasyAuth only identifies _viewers_ for feedback attribution and owner gating.
+The agent still runs as one identity (its git/Azure CLI/Copilot credentials); Easy Auth only identifies _viewers_ for feedback attribution and owner gating.
+
+> **Tunnels (e.g. `devtunnel`) are different:** they gate _access_ via login but forward from localhost and do **not** inject an identity header. Through a tunnel Saturn cannot prove who a viewer is, so visitors are **anonymous** (their feedback is recorded as `anonymous`, never a typed-in name) and **Start/Stop is disabled** (owner control is limited to direct, on-machine requests). Only Easy Auth gives true per-user identities and lets the owner control the loop remotely.

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { z } from 'zod';
-import { buildCommentDeepLink, buildPullRequestWebUrl, DASHBOARD_PORT } from './config';
+import { buildCommentDeepLink, buildPullRequestWebUrl, DASHBOARD_PORT, isFeedbackEnabled } from './config';
 import { createSaturnService, type SaturnService, type SaturnServiceConfig } from './saturnService';
 import { readAllFeedback, recordFeedback } from './saturnStore';
 import { consoleLogger, runCommand } from './util';
@@ -12,8 +12,7 @@ const feedbackSubmissionSchema = z.object({
   prId: z.number(),
   commentId: z.number(),
   rating: z.enum(['up', 'down', 'none']),
-  message: z.string().max(5000),
-  submittedBy: z.string().max(200).optional()
+  message: z.string().max(5000)
 });
 
 // Open Server-Sent Events connections (one per viewing dashboard); state is pushed to all of them.
@@ -25,30 +24,55 @@ function resolveOnBehalfOf(): string {
   return value === '' ? 'the repository owner' : value;
 }
 
-// The Saturn owner (admin): the only identity allowed to start/stop the agent. Other corpnet users can view
-// the dashboard and submit feedback, but cannot control the loop. Set SATURN_OWNER when hosted; otherwise it
-// defaults to the machine's git identity (i.e. you, on this machine).
+// The Saturn owner (admin): the only identity allowed to start/stop the agent. Other viewers can open the
+// dashboard and submit feedback, but cannot control the loop. Set SATURN_OWNER when hosted behind an auth
+// proxy; otherwise it defaults to the machine's git identity (i.e. you, on this machine).
 const OWNER_IDENTITY =
   (process.env.SATURN_OWNER ?? '').trim() !== '' ? (process.env.SATURN_OWNER ?? '').trim() : resolveOnBehalfOf();
 
-/** True when the request originates from this machine (loopback) - i.e. the owner running it locally. */
+/**
+ * True when the request's socket is loopback. NOTE: a reverse proxy or tunnel running on this machine also
+ * forwards from loopback, so this alone does NOT prove the owner - see isDirectLocalRequest.
+ */
 function isLoopbackRequest(req: IncomingMessage): boolean {
   const address = req.socket.remoteAddress ?? '';
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
 /**
- * The identity we can *trust* for this request, or undefined when the viewer is an unauthenticated corpnet
- * visitor who must self-identify. Trusted when hosted behind Azure AD (the x-ms-client-principal-name header)
- * or when the request comes from this machine over loopback (that is the owner). A plain corpnet visitor
- * hitting the LAN address has neither, so we never guess - they are returned as undefined.
+ * True only for a request made *directly* to the dashboard from this machine - never one relayed through a
+ * reverse proxy or tunnel (e.g. devtunnel), even though those also forward from loopback. A relay either
+ * carries a non-local Host or adds x-forwarded-* headers, so we require all of: a loopback socket, no
+ * forwarding headers, and a localhost Host header. This is what keeps owner control localhost-only.
+ */
+function isDirectLocalRequest(req: IncomingMessage): boolean {
+  if (!isLoopbackRequest(req)) {
+    return false;
+  }
+  if (
+    req.headers['x-forwarded-for'] !== undefined ||
+    req.headers['x-forwarded-host'] !== undefined ||
+    req.headers['x-forwarded-proto'] !== undefined
+  ) {
+    return false;
+  }
+  const host = (req.headers.host ?? '').toLowerCase();
+  return host.startsWith('localhost') || host.startsWith('127.0.0.1') || host.startsWith('[::1]') || host === '::1';
+}
+
+/**
+ * The identity we can *trust* for this request, or undefined when we cannot prove who the viewer is - in which
+ * case we must never attribute their feedback to a name nor let them control the loop. Trusted only via:
+ *   1. an auth proxy that injects the signed-in identity (Azure AD / Easy Auth `x-ms-client-principal-name`), or
+ *   2. a direct request from this machine (the owner at the keyboard), never a tunnel/proxy relay.
+ * A viewer over a tunnel has neither, so they are anonymous (undefined). Client-supplied identity is never trusted.
  */
 function resolveTrustedIdentity(req: IncomingMessage): string | undefined {
   const principal = req.headers['x-ms-client-principal-name'];
   if (typeof principal === 'string' && principal.trim() !== '') {
     return principal.trim();
   }
-  if (isLoopbackRequest(req)) {
+  if (isDirectLocalRequest(req)) {
     return OWNER_IDENTITY;
   }
 
@@ -56,9 +80,8 @@ function resolveTrustedIdentity(req: IncomingMessage): string | undefined {
 }
 
 /**
- * True only for the owner. Start/Stop is restricted to this: the local machine (loopback) or, when hosted
- * behind Azure AD, the identity matching SATURN_OWNER. Corpnet viewers on the LAN address are never owners,
- * so they cannot control the loop even though they can open the dashboard.
+ * True only for the owner: an auth-proxy identity matching SATURN_OWNER, or a direct local request from this
+ * machine. Tunnel/proxy viewers are never the owner, so they cannot start/stop the loop.
  */
 function isOwner(req: IncomingMessage): boolean {
   return resolveTrustedIdentity(req)?.toLowerCase() === OWNER_IDENTITY.toLowerCase();
@@ -303,10 +326,6 @@ const FEEDBACK_HTML = `<!doctype html>
 <main>
   <h1>SATURN FEEDBACK</h1>
   <div class="who" id="who">Checking sign-in...</div>
-  <div id="aliasRow" style="display:none; margin:12px 0;">
-    <label style="font-size:13px; color:#8b93b5;">Your alias or email</label>
-    <input id="alias" type="text" placeholder="you@microsoft.com" style="width:100%; box-sizing:border-box; margin-top:6px; background:#0d1430; color:#e6e9f0; border:1px solid #232a44; border-radius:8px; padding:8px;" />
-  </div>
   <div class="ctx" id="ctx"></div>
   <div class="rate">
     <button id="up" type="button">Helpful</button>
@@ -328,10 +347,9 @@ const FEEDBACK_HTML = `<!doctype html>
     if (known) {
       document.getElementById('who').innerHTML = 'Signed in as <b>' + esc(w.user) + '</b>';
     } else {
-      document.getElementById('who').textContent = 'Viewing over the corpnet - add your alias below so your feedback is attributed to you.';
-      document.getElementById('aliasRow').style.display = 'block';
+      document.getElementById('who').textContent = 'Submitting anonymously. Open the signed-in (hosted) dashboard for attributed feedback.';
     }
-  }).catch(function () { document.getElementById('who').textContent = 'Add your alias below so your feedback is attributed to you.'; document.getElementById('aliasRow').style.display = 'block'; });
+  }).catch(function () { document.getElementById('who').textContent = 'Submitting anonymously.'; });
   function selectRating(r) {
     rating = r;
     document.getElementById('up').className = r === 'up' ? 'sel' : '';
@@ -341,10 +359,7 @@ const FEEDBACK_HTML = `<!doctype html>
   document.getElementById('down').onclick = function () { selectRating('down'); };
   document.getElementById('send').onclick = function () {
     var btn = document.getElementById('send'); btn.disabled = true;
-    var aliasEl = document.getElementById('alias');
-    var alias = ((aliasEl && aliasEl.value) || '').trim();
-    if (!known && alias === '') { btn.disabled = false; document.getElementById('result').innerHTML = '<div class="err">Please enter your alias or email.</div>'; return; }
-    fetch('/api/feedback', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ prId: prId ? Number(prId) : 0, commentId: commentId ? Number(commentId) : 0, rating: rating, message: document.getElementById('msg').value, submittedBy: alias }) })
+    fetch('/api/feedback', { method:'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ prId: prId ? Number(prId) : 0, commentId: commentId ? Number(commentId) : 0, rating: rating, message: document.getElementById('msg').value }) })
       .then(function (r) { if (!r.ok) { throw new Error('bad status'); } return r.json(); })
       .then(function () { document.getElementById('result').innerHTML = '<div class="ok">Thanks - your feedback was recorded.</div>'; })
       .catch(function () { btn.disabled = false; document.getElementById('result').innerHTML = '<div class="err">Could not submit. Please try again.</div>'; });
@@ -353,6 +368,16 @@ const FEEDBACK_HTML = `<!doctype html>
 </body>
 </html>`;
 
+const FEEDBACK_DISABLED_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Saturn - Feedback</title>
+<style>:root{color-scheme:dark}body{margin:0;font-family:'Segoe UI',system-ui,sans-serif;background:#0b1020;color:#e6e9f0}main{max-width:640px;margin:48px auto;padding:0 24px}h1{font-size:20px;letter-spacing:2px}p{color:#8b93b5;line-height:1.5}a{color:#7aa2ff}</style>
+</head><body><main>
+  <h1>SATURN FEEDBACK</h1>
+  <p>Feedback isn't available yet. It will be enabled once signed-in (authenticated) attribution is in place.</p>
+  <p><a href="/">Back to the dashboard</a></p>
+</main></body></html>`;
+
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
@@ -360,6 +385,7 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
 
 async function handleRequest(service: SaturnService, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = req.url ?? '/';
+  const pathname = url.split('?')[0];
   const method = req.method ?? 'GET';
 
   if (method === 'POST' && url === '/api/start') {
@@ -413,15 +439,17 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && url === '/api/feedback') {
+    if (!isFeedbackEnabled()) {
+      sendJson(res, 403, { ok: false, error: 'feedback is currently disabled' });
+      return;
+    }
     const raw = await readRequestBody(req);
     try {
       const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
       const body = feedbackSubmissionSchema.parse(parsed);
-      // Trust the server-determined identity (EasyAuth, or the loopback owner) when we have one; otherwise
-      // attribute to the alias the corpnet visitor typed on the feedback page, or 'anonymous'.
-      const trusted = resolveTrustedIdentity(req);
-      const typedAlias = body.submittedBy?.trim() ?? '';
-      const submittedBy = trusted ?? (typedAlias !== '' ? typedAlias : 'anonymous');
+      // Identity is server-determined only: a trusted auth-proxy/owner identity, else 'anonymous'. We never
+      // accept a client-supplied name (that would let anyone submit feedback as someone else).
+      const submittedBy = resolveTrustedIdentity(req) ?? 'anonymous';
       const stored = recordFeedback({
         pullRequestId: body.prId,
         commentId: body.commentId,
@@ -435,12 +463,12 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     }
     return;
   }
-  if (method === 'GET' && (url === '/feedback' || url.startsWith('/feedback?'))) {
+  if (method === 'GET' && pathname === '/feedback') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(FEEDBACK_HTML);
+    res.end(isFeedbackEnabled() ? FEEDBACK_HTML : FEEDBACK_DISABLED_HTML);
     return;
   }
-  if (method === 'GET' && (url === '/' || url === '/index.html')) {
+  if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(DASHBOARD_HTML);
     return;

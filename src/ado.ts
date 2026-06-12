@@ -5,6 +5,7 @@ import {
   buildFeedbackUrl,
   buildPullRequestWebUrl,
   buildRepositoryApiUrl,
+  isFeedbackEnabled,
 } from "./config";
 import type { ChangedFile, PullRequestSummary, ReviewComment } from "./review";
 import { describeError, runCommand, type RunCommandResult } from "./util";
@@ -723,20 +724,22 @@ export async function postInlineComment(
   );
   const threadId = threadResponseSchema.parse(response).id;
 
-  // The thread id is only known after creation, so add the comment-specific feedback link (carrying the PR
-  // id and this thread id) in a follow-up edit of the root comment. Best-effort: a failure here must not
-  // fail the review, so the comment just keeps its original body.
-  try {
-    const feedbackUrl = buildFeedbackUrl(pullRequestId, threadId);
-    await azureDevOpsPatchJson(
-      repoRoot,
-      `/pullRequests/${String(pullRequestId)}/threads/${String(threadId)}/comments/1?api-version=${API_VERSION}`,
-      {
-        content: `${comment.body}\n\n[Share feedback on this review](${feedbackUrl})`,
-      },
-    );
-  } catch {
-    /* leave the comment without the feedback link */
+  // When feedback is enabled, add the comment-specific feedback link (carrying the PR id and this thread id,
+  // known only after creation) in a follow-up edit of the root comment. Off by default until authenticated
+  // attribution is in place. Best-effort: a failure here must not fail the review.
+  if (isFeedbackEnabled()) {
+    try {
+      const feedbackUrl = buildFeedbackUrl(pullRequestId, threadId);
+      await azureDevOpsPatchJson(
+        repoRoot,
+        `/pullRequests/${String(pullRequestId)}/threads/${String(threadId)}/comments/1?api-version=${API_VERSION}`,
+        {
+          content: `${comment.body}\n\n[Share feedback on this review](${feedbackUrl})`,
+        },
+      );
+    } catch {
+      /* leave the comment without the feedback link */
+    }
   }
 
   return threadId;
