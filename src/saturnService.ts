@@ -1,7 +1,7 @@
 import { defaultManagedCloneDir, installRepoDependenciesInBackground } from './git';
 import type { ReviewOutcome } from './reviewPullRequest';
 import { runSaturn, type SaturnProgressEvent } from './runSaturn';
-import { getReviewSummary, readReviewsPage } from './saturnStore';
+import { getReviewSummary, readReviewsCursor } from './saturnStore';
 import type { Logger } from './util';
 
 const MASTER_UPDATE_INTERVAL_MS = 2 * 60 * 60 * 1000; // refresh the clone's master at most every 2 hours
@@ -37,12 +37,11 @@ export interface SaturnReviewRecord {
   readonly iterations: readonly SaturnIterationRecord[];
 }
 
-/** A page of reviewed pull requests (each appears once), newest reviewed first. */
-export interface SaturnReviewsPage {
-  readonly page: number;
-  readonly pageSize: number;
+/** A cursor batch of reviewed pull requests (each appears once), newest reviewed first. */
+export interface SaturnReviewsCursorPage {
+  readonly items: readonly SaturnReviewRecord[];
+  readonly nextCursor: string | null;
   readonly total: number;
-  readonly reviews: readonly SaturnReviewRecord[];
 }
 
 /** The PR Saturn is currently reviewing. */
@@ -68,7 +67,7 @@ export interface SaturnService {
   start(): SaturnState;
   stop(): SaturnState;
   getState(): SaturnState;
-  getReviewsPage(page: number, pageSize: number): SaturnReviewsPage;
+  getReviewsCursor(cursor: string | undefined, limit: number): SaturnReviewsCursorPage;
 }
 
 /** Configuration for the Saturn agent loop. */
@@ -119,7 +118,7 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
   function snapshot(): SaturnState {
     // Live status lives in this process; the running total and reviewed-PR count come from the shared
     // store via a cheap summary read (it does not parse every per-PR file). The full review history is
-    // served separately and paginated via getReviewsPage so this frequently-polled snapshot stays light.
+    // served separately and paginated via getReviewsCursor so this frequently-polled snapshot stays light.
     const summary = getReviewSummary();
     return {
       running,
@@ -292,8 +291,8 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
     getState(): SaturnState {
       return snapshot();
     },
-    getReviewsPage(page: number, pageSize: number): SaturnReviewsPage {
-      return readReviewsPage(page, pageSize);
+    getReviewsCursor(cursor: string | undefined, limit: number): SaturnReviewsCursorPage {
+      return readReviewsCursor(cursor, limit);
     }
   };
 }

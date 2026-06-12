@@ -217,7 +217,10 @@ export function readAllPullRequestReviews(): readonly StoredReview[] {
       /* skip a corrupt per-PR file */
     }
   }
-  reviews.sort((left, right) => latestReviewedAtMs(right) - latestReviewedAtMs(left));
+  reviews.sort((left, right) => {
+    const byReviewedAt = latestReviewedAtMs(right) - latestReviewedAtMs(left);
+    return byReviewedAt !== 0 ? byReviewedAt : right.pullRequestId - left.pullRequestId;
+  });
   return reviews;
 }
 
@@ -226,21 +229,54 @@ export function readSaturnState(): StoredSaturnState {
   return { totalReviewed: readTotals(), reviews: readAllPullRequestReviews() };
 }
 
-/** A page of reviewed pull requests for the dashboard. */
-export interface ReviewsPage {
-  readonly page: number;
-  readonly pageSize: number;
+/** An opaque-cursor batch of reviewed pull requests for the dashboard's infinite scroll. */
+export interface ReviewsCursorPage {
+  /** This batch of reviews (newest reviewed first). */
+  readonly items: readonly StoredReview[];
+  /** Cursor to pass back for the next (older) batch, or null when the end is reached. */
+  readonly nextCursor: string | null;
+  /** Total number of reviewed pull requests (for display). */
   readonly total: number;
-  readonly reviews: readonly StoredReview[];
 }
 
-/** Read one page (1-based) of reviewed pull requests, newest reviewed first. */
-export function readReviewsPage(page: number, pageSize: number): ReviewsPage {
+// A cursor marks a position in the newest-first ordering: the (latest-reviewed-at, pull-request-id) of the
+// last item already returned. The next batch is everything strictly older than it in that total order, which
+// keeps paging stable even when fresh reviews are inserted at the top while the user scrolls.
+const reviewCursorSchema = z.object({ t: z.number(), id: z.number() });
+
+function encodeReviewCursor(review: StoredReview): string {
+  return Buffer.from(JSON.stringify({ t: latestReviewedAtMs(review), id: review.pullRequestId })).toString('base64url');
+}
+
+function decodeReviewCursor(raw: string | undefined): { t: number; id: number } | undefined {
+  if (raw === undefined || raw === '') {
+    return undefined;
+  }
+  try {
+    const parsed = reviewCursorSchema.safeParse(JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')));
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read one cursor batch of reviewed pull requests, newest reviewed first (for infinite scroll). */
+export function readReviewsCursor(cursor: string | undefined, limit: number): ReviewsCursorPage {
+  const safeLimit = limit > 0 ? Math.min(limit, 100) : 25;
   const all = readAllPullRequestReviews();
-  const safePageSize = pageSize > 0 ? pageSize : 25;
-  const safePage = page > 0 ? page : 1;
-  const start = (safePage - 1) * safePageSize;
-  return { page: safePage, pageSize: safePageSize, total: all.length, reviews: all.slice(start, start + safePageSize) };
+  const after = decodeReviewCursor(cursor);
+  let startIndex = 0;
+  if (after !== undefined) {
+    const index = all.findIndex((review) => {
+      const reviewedAt = latestReviewedAtMs(review);
+      return reviewedAt < after.t || (reviewedAt === after.t && review.pullRequestId < after.id);
+    });
+    startIndex = index === -1 ? all.length : index;
+  }
+  const items = all.slice(startIndex, startIndex + safeLimit);
+  const last = items.at(-1);
+  const nextCursor = last !== undefined && startIndex + items.length < all.length ? encodeReviewCursor(last) : null;
+  return { items, nextCursor, total: all.length };
 }
 
 /** Cheap summary for the dashboard status poll: running total and number of reviewed PRs. */

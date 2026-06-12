@@ -7,7 +7,7 @@ export type {
   SaturnComment,
   SaturnIterationRecord,
   SaturnReviewRecord,
-  SaturnReviewsPage,
+  SaturnReviewsCursorPage,
   SaturnService,
   SaturnServiceConfig,
   SaturnState

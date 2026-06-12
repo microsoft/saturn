@@ -189,8 +189,10 @@ export const BOT_NAME = "Saturn";
  */
 export const BOT_REVIEW_MARKER = "<!-- saturn-review:v1 -->";
 
-/** Default port the Saturn dashboard (which also serves the feedback page) listens on. */
-export const DASHBOARD_PORT = 6789;
+/** Port the Saturn dashboard (which also serves the feedback page) listens on; override with SATURN_PORT. */
+const configuredDashboardPort = Number.parseInt(process.env.SATURN_PORT ?? "", 10);
+export const DASHBOARD_PORT: number =
+  Number.isNaN(configuredDashboardPort) || configuredDashboardPort <= 0 ? 6789 : configuredDashboardPort;
 
 /**
  * Base URL of the Saturn feedback page. Set SATURN_FEEDBACK_URL to a corpnet-hosted dashboard (e.g.
