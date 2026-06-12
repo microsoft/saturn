@@ -38,6 +38,10 @@ export interface StoredIterationReview {
   /** Findings the first pass proposed vs. how many survived the verification gate. */
   readonly candidatesProposed?: number;
   readonly candidatesKept?: number;
+  /** Reasoning effort used for the review. */
+  readonly reasoningEffort?: string;
+  /** When the reviewed PR iteration was created/pushed (ISO), for time-to-review latency. */
+  readonly iterationCreatedAt?: string;
 }
 
 /** A persisted record of a reviewed pull request, with one entry per reviewed iteration. */
@@ -79,7 +83,9 @@ const iterationSchema = z.object({
   filesChanged: z.number().optional(),
   diffTruncated: z.boolean().optional(),
   candidatesProposed: z.number().optional(),
-  candidatesKept: z.number().optional()
+  candidatesKept: z.number().optional(),
+  reasoningEffort: z.string().optional(),
+  iterationCreatedAt: z.string().optional()
 });
 
 const reviewSchema = z.object({
@@ -359,7 +365,11 @@ function matchesFilters(review: StoredReview, filters: ReviewFilters): boolean {
 }
 
 /** Read one cursor batch of reviewed pull requests (optionally filtered), newest reviewed first. */
-export function readReviewsCursor(cursor: string | undefined, limit: number, filters?: ReviewFilters): ReviewsCursorPage {
+export function readReviewsCursor(
+  cursor: string | undefined,
+  limit: number,
+  filters?: ReviewFilters
+): ReviewsCursorPage {
   const safeLimit = limit > 0 ? Math.min(limit, 100) : 25;
   const all = readAllPullRequestReviews().filter((review) => filters === undefined || matchesFilters(review, filters));
   const after = decodeReviewCursor(cursor);
@@ -386,11 +396,39 @@ export interface ReviewStats {
   readonly findingsTotal: number;
   readonly bySeverity: Record<string, number>;
   readonly byCategory: Record<string, number>;
+  /** Errors grouped by cause (timeout | cli-exit | unparseable | auth | other). */
+  readonly errorBreakdown: Record<string, number>;
+  /** Average review duration in ms across iterations that recorded one. */
+  readonly avgDurationMs: number;
+  /** Reviews per day for the last 14 days (oldest first), for the sparkline. */
+  readonly daily: readonly { readonly day: string; readonly count: number }[];
+  /** Most frequent finding titles (recurring patterns), most common first. */
+  readonly topTitles: readonly { readonly title: string; readonly count: number }[];
+  /** Files with the most findings (hotspots), most common first. */
+  readonly topFiles: readonly { readonly path: string; readonly count: number }[];
   readonly reviewedToday: number;
   readonly reviewedWeek: number;
 }
 
-/** Compute aggregate stats (status mix, severity/category breakdown, recent throughput) over all reviews. */
+/** Classify an error detail string into a coarse cause, for the dashboard's error-breakdown panel. */
+function classifyError(detail: string): string {
+  const text = detail.toLowerCase();
+  if (text.includes('timed out') || text.includes('timeout')) {
+    return 'timeout';
+  }
+  if (text.includes('login') || text.includes('credential') || text.includes('401') || text.includes('unauthor')) {
+    return 'auth';
+  }
+  if (text.includes('could not parse')) {
+    return 'unparseable';
+  }
+  if (text.includes('exited with code')) {
+    return 'cli-exit';
+  }
+  return 'other';
+}
+
+/** Compute aggregate stats (status mix, severity/category/error breakdown, throughput, recurring patterns). */
 export function readReviewStats(): ReviewStats {
   const all = readAllPullRequestReviews();
   const now = Date.now();
@@ -398,12 +436,18 @@ export function readReviewStats(): ReviewStats {
   const weekAgoMs = now - 7 * 24 * 60 * 60 * 1000;
   const bySeverity: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
+  const errorBreakdown: Record<string, number> = {};
+  const titleCounts = new Map<string, { title: string; count: number }>();
+  const fileCounts = new Map<string, number>();
+  const dayCounts = new Map<string, number>();
   let reviewed = 0;
   let noFindings = 0;
   let error = 0;
   let findingsTotal = 0;
   let reviewedToday = 0;
   let reviewedWeek = 0;
+  let durationSum = 0;
+  let durationCount = 0;
   for (const review of all) {
     const latest = latestIterationOf(review);
     const status = latest?.status ?? '';
@@ -413,22 +457,70 @@ export function readReviewStats(): ReviewStats {
       noFindings += 1;
     } else if (status === 'error') {
       error += 1;
+      const cause = classifyError(latest?.detail ?? '');
+      errorBreakdown[cause] = (errorBreakdown[cause] ?? 0) + 1;
     }
-    const reviewedAt = latestReviewedAtMs(review);
-    if (reviewedAt >= dayAgoMs) {
+    const reviewedAtMs = latestReviewedAtMs(review);
+    if (reviewedAtMs >= dayAgoMs) {
       reviewedToday += 1;
     }
-    if (reviewedAt >= weekAgoMs) {
+    if (reviewedAtMs >= weekAgoMs) {
       reviewedWeek += 1;
+    }
+    if (reviewedAtMs > 0) {
+      const day = new Date(reviewedAtMs).toISOString().slice(0, 10);
+      dayCounts.set(day, (dayCounts.get(day) ?? 0) + 1);
+    }
+    if (latest?.durationMs !== undefined) {
+      durationSum += latest.durationMs;
+      durationCount += 1;
     }
     for (const comment of latest?.comments ?? []) {
       findingsTotal += 1;
       bySeverity[comment.severity] = (bySeverity[comment.severity] ?? 0) + 1;
       const category = comment.category !== undefined && comment.category !== '' ? comment.category : 'correctness';
       byCategory[category] = (byCategory[category] ?? 0) + 1;
+      const titleKey = comment.title.trim().toLowerCase();
+      const existingTitle = titleCounts.get(titleKey);
+      if (existingTitle === undefined) {
+        titleCounts.set(titleKey, { title: comment.title.trim(), count: 1 });
+      } else {
+        existingTitle.count += 1;
+      }
+      if (comment.filePath !== '') {
+        fileCounts.set(comment.filePath, (fileCounts.get(comment.filePath) ?? 0) + 1);
+      }
     }
   }
-  return { total: all.length, reviewed, noFindings, error, findingsTotal, bySeverity, byCategory, reviewedToday, reviewedWeek };
+  const daily: { day: string; count: number }[] = [];
+  for (let dayOffset = 13; dayOffset >= 0; dayOffset -= 1) {
+    const day = new Date(now - dayOffset * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    daily.push({ day, count: dayCounts.get(day) ?? 0 });
+  }
+  const topTitles = [...titleCounts.values()]
+    .filter((entry) => entry.count > 1)
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 8);
+  const topFiles = [...fileCounts.entries()]
+    .map(([path, count]) => ({ path, count }))
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 8);
+  return {
+    total: all.length,
+    reviewed,
+    noFindings,
+    error,
+    findingsTotal,
+    bySeverity,
+    byCategory,
+    errorBreakdown,
+    avgDurationMs: durationCount > 0 ? Math.round(durationSum / durationCount) : 0,
+    daily,
+    topTitles,
+    topFiles,
+    reviewedToday,
+    reviewedWeek
+  };
 }
 
 /** Cheap summary for the dashboard status poll: running total and number of reviewed PRs. */

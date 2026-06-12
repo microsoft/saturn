@@ -63,6 +63,10 @@ export interface ReviewOutcome {
   /** Findings the first pass proposed vs. how many survived the verification gate. */
   readonly candidatesProposed?: number;
   readonly candidatesKept?: number;
+  /** Reasoning effort the model used for this review. */
+  readonly reasoningEffort?: string;
+  /** When the reviewed PR iteration was created/pushed (ISO), for time-to-review latency. */
+  readonly iterationCreatedAt?: string;
 }
 
 /** Everything {@link reviewPullRequest} needs to review and (optionally) post on one pull request. */
@@ -302,6 +306,7 @@ export async function reviewPullRequest(
     const {
       iterationId: changedIterationId,
       baseCommit,
+      iterationCreatedAt,
       files: changedFiles
     } = await getChangedFiles(repoRoot, pullRequestId);
     iterationId = changedIterationId ?? iterationId;
@@ -325,9 +330,11 @@ export async function reviewPullRequest(
     });
     const reviewMeta = {
       model: deps.model,
+      reasoningEffort: deps.reasoningEffort,
       filesReviewed: fileInputs.length,
       filesChanged: changedFiles.length,
-      diffTruncated: diffPayload.truncated
+      diffTruncated: diffPayload.truncated,
+      iterationCreatedAt
     };
     const prompt = buildReviewPrompt({
       pullRequest,
@@ -562,6 +569,7 @@ export async function reviewPullRequest(
       iterationId,
       detail: describeError(error),
       model: deps.model,
+      reasoningEffort: deps.reasoningEffort,
       durationMs: Date.now() - startedAtMs
     };
   }

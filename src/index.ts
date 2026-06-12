@@ -12,7 +12,9 @@ export type {
   SaturnScanRecord,
   SaturnService,
   SaturnServiceConfig,
-  SaturnState
+  SaturnState,
+  SaturnThreadStatus,
+  SaturnUpNext
 } from './saturnService';
 export type { ReviewFilters, ReviewStats } from './saturnStore';
 export { reviewPullRequest } from './reviewPullRequest';

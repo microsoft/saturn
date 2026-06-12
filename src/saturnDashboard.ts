@@ -313,6 +313,15 @@ const DASHBOARD_HTML = `<!doctype html>
   .meta-row .tag.warn { color:var(--warn); border-color:rgba(255,180,84,.3); }
   .cat { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:6px; background:var(--panel-3); color:var(--muted); border:1px solid var(--border-soft); }
   .cat.security, .cat.privacy { background:rgba(255,93,115,.14); color:#ff8497; border-color:rgba(255,93,115,.32); }
+  .sevmini { display:inline-flex; gap:4px; }
+  .sevdot { font-size:10px; font-weight:800; min-width:18px; text-align:center; padding:1px 5px; border-radius:5px; }
+  .sevdot.sev-block { background:rgba(255,93,115,.16); color:#ff8497; } .sevdot.sev-major { background:rgba(255,180,84,.16); color:var(--warn); }
+  .sevdot.sev-minor { background:rgba(91,124,250,.16); color:var(--accent-2); } .sevdot.sev-nit { background:rgba(108,117,156,.18); color:var(--muted); }
+  .spark { display:inline-flex; align-items:flex-end; gap:2px; height:22px; }
+  .spark .sb { width:5px; background:var(--accent); border-radius:2px 2px 0 0; opacity:.85; }
+  .res { font-size:10px; font-weight:700; padding:1px 6px; border-radius:6px; }
+  .res:empty { padding:0; }
+  .res.ok { background:rgba(70,209,158,.14); color:var(--ok); } .res.warn { background:rgba(255,180,84,.16); color:var(--warn); }
   @media (max-width: 620px) { header { padding:12px 16px; gap:10px; } main { padding:18px 14px 70px; } .pr-meta { display:none; } }
 </style>
 </head>
@@ -335,6 +344,7 @@ const DASHBOARD_HTML = `<!doctype html>
   </div>
   <div id="health" class="health"></div>
   <details id="agentBox" class="agent"><summary>Agent details</summary><div id="agentBody" class="agent-body"></div></details>
+  <details id="insightsBox" class="agent" style="display:none"><summary>Patterns &amp; hotspots</summary><div id="insightsBody" class="agent-body"></div></details>
   <div class="section-head"><h2>Reviewed pull requests</h2><span id="prCount" class="count-chip"></span></div>
   <div id="filters" class="filters">
     <input id="fSearch" class="f-input" type="search" placeholder="Search id, title, author" />
@@ -391,8 +401,12 @@ const DASHBOARD_HTML = `<!doctype html>
     if (ms == null || isNaN(ms)) { return ''; }
     var s = Math.round(ms / 1000);
     if (s < 60) { return s + 's'; }
-    var m = Math.floor(s / 60); var r = s % 60;
-    return m + 'm' + (r ? ' ' + r + 's' : '');
+    var m = Math.floor(s / 60);
+    if (m < 60) { var rs = s % 60; return m + 'm' + (rs ? ' ' + rs + 's' : ''); }
+    var h = Math.floor(m / 60);
+    if (h < 24) { var rm = m % 60; return h + 'h' + (rm ? ' ' + rm + 'm' : ''); }
+    var dd = Math.floor(h / 24); var rh = h % 24;
+    return dd + 'd' + (rh ? ' ' + rh + 'h' : '');
   };
   var sevClass = function (s) {
     var k = String(s || '').toLowerCase();
@@ -416,6 +430,7 @@ const DASHBOARD_HTML = `<!doctype html>
   var firstStateApplied = false;
   var isOwnerClient = false;
   var LIMIT = 12;
+  var curStartedAt = null;
   var filters = { search: '', status: '', category: '', author: '', fromMs: null, toMs: null };
 
   var post = function (p) { fetch(p, { method: 'POST' }).then(function () { return fetch('/api/state'); }).then(function (r) { return r.json(); }).then(applyState).catch(function () {}); };
@@ -438,14 +453,19 @@ const DASHBOARD_HTML = `<!doctype html>
     var sc = sevClass(c.severity);
     var cat = c.category ? '<span class="cat ' + esc(c.category) + '">' + esc(c.category) + '</span>' : '';
     var open = c.deepLink ? ' &middot; <a href="' + esc(c.deepLink) + '" target="_blank" rel="noopener">open comment</a>' : '';
-    return '<div class="comment ' + sc + '"><div class="loc"><span class="chip ' + sc + '">' + esc(c.severity) + '</span>' + cat
+    var res = c.threadId ? '<span class="res" data-thread="' + c.threadId + '"></span>' : '';
+    return '<div class="comment ' + sc + '"><div class="loc"><span class="chip ' + sc + '">' + esc(c.severity) + '</span>' + cat + res
       + '<span class="path">' + esc(c.filePath) + ':' + c.line + '</span>' + open + '</div>'
       + '<div class="c-title">' + esc(c.title) + '</div><div class="c-body">' + esc(c.body) + '</div></div>';
   }
   function iterMeta(it) {
     var parts = [];
-    if (it.model) { parts.push('<span class="tag">' + esc(it.model) + '</span>'); }
-    if (it.durationMs != null) { parts.push('<span class="tag">' + esc(fmtDur(it.durationMs)) + '</span>'); }
+    if (it.model) { parts.push('<span class="tag">' + esc(it.model) + (it.reasoningEffort ? ' &middot; ' + esc(it.reasoningEffort) : '') + '</span>'); }
+    if (it.durationMs != null) { parts.push('<span class="tag">took ' + esc(fmtDur(it.durationMs)) + '</span>'); }
+    if (it.iterationCreatedAt && it.reviewedAt) {
+      var lat = Date.parse(it.reviewedAt) - Date.parse(it.iterationCreatedAt);
+      if (!isNaN(lat) && lat >= 0) { parts.push('<span class="tag">' + esc(fmtDur(lat)) + ' to review</span>'); }
+    }
     if (it.filesReviewed != null) {
       var partial = it.diffTruncated || (it.filesChanged != null && it.filesChanged > it.filesReviewed);
       parts.push('<span class="tag' + (partial ? ' warn' : '') + '">' + it.filesReviewed + (it.filesChanged != null ? '/' + it.filesChanged : '') + ' files' + (partial ? ' (truncated)' : '') + '</span>');
@@ -462,6 +482,15 @@ const DASHBOARD_HTML = `<!doctype html>
       + '<span title="' + esc(fmtAbs(it.reviewedAt)) + '">' + esc(fmtRel(it.reviewedAt)) + '</span></div>'
       + iterMeta(it) + detail + (comments || fallback) + '</div>';
   }
+  function sevMiniHtml(counts) {
+    var order = [['blocking', 'sev-block'], ['major', 'sev-major'], ['minor', 'sev-minor'], ['nit', 'sev-nit']];
+    var html = '';
+    for (var i = 0; i < order.length; i++) {
+      var n = counts[order[i][0]] || 0;
+      if (n) { html += '<span class="sevdot ' + order[i][1] + '" title="' + order[i][0] + ': ' + n + '">' + n + '</span>'; }
+    }
+    return html ? '<span class="sevmini">' + html + '</span>' : '';
+  }
   function cardHtml(r) {
     var iterations = (r.iterations || []).slice().sort(function (a, b) { return b.iterationId - a.iterationId; });
     var latest = iterations[0] || {};
@@ -469,13 +498,15 @@ const DASHBOARD_HTML = `<!doctype html>
     var isOpen = !!expanded[r.pullRequestId];
     var iterHtml = iterations.map(renderIteration).join('');
     var catSet = {};
+    var sevCounts = {};
     iterations.forEach(function (it) { (it.comments || []).forEach(function (c) { if (c.category) { catSet[c.category] = 1; } }); });
+    (latest.comments || []).forEach(function (c) { sevCounts[c.severity] = (sevCounts[c.severity] || 0) + 1; });
     var catChips = Object.keys(catSet).map(function (k) { return '<span class="cat ' + esc(k) + '">' + esc(k) + '</span>'; }).join('');
     return '<div class="pr' + (isOpen ? ' open' : '') + '" data-id="' + r.pullRequestId + '">'
       + '<button class="pr-head" aria-expanded="' + (isOpen ? 'true' : 'false') + '" aria-controls="' + bodyId + '">'
       + '<span class="chevron">&#8250;</span><span class="pr-id">#' + r.pullRequestId + '</span>'
       + '<span class="pr-title">' + esc(r.title) + '</span>'
-      + '<span class="pr-sub">' + catChips + '<span class="pr-meta">' + esc(r.author) + ' &middot; ' + iterations.length + ' iter &middot; ' + esc(fmtRel(latest.reviewedAt)) + '</span>'
+      + '<span class="pr-sub">' + sevMiniHtml(sevCounts) + catChips + '<span class="pr-meta">' + esc(r.author) + ' &middot; ' + iterations.length + ' iter &middot; ' + esc(fmtRel(latest.reviewedAt)) + '</span>'
       + '<span class="pill ' + statusClass(latest.status) + '">' + esc(statusLabel(latest.status)) + '</span></span></button>'
       + '<div class="pr-body" id="' + bodyId + '" role="region"><div class="pr-body-inner"><div class="pr-body-pad">'
       + '<div class="iter-head" style="margin-bottom:12px"><a href="' + esc(r.webUrl) + '" target="_blank" rel="noopener">Open PR #' + r.pullRequestId + ' in Azure DevOps &#8599;</a></div>'
@@ -504,6 +535,8 @@ const DASHBOARD_HTML = `<!doctype html>
       }
       if (!loaded.length && items.length && Object.keys(expanded).length === 0) { expanded[items[0].pullRequestId] = true; }
       appendReviews(items);
+      var openCards = document.querySelectorAll('#reviews .pr.open');
+      for (var oc = 0; oc < openCards.length; oc++) { loadResolution(openCards[oc], openCards[oc].getAttribute('data-id')); }
       nextCursor = p.nextCursor || null;
       reachedEnd = !nextCursor;
       document.getElementById('prCount').textContent = (p.total || 0) + (hasActiveFilters() ? ' match' : ' total');
@@ -571,6 +604,30 @@ const DASHBOARD_HTML = `<!doctype html>
     refreshFromTop();
   };
 
+  var resLoaded = {};
+  function resInfo(status) {
+    var s = String(status).toLowerCase();
+    if (s === 'fixed' || s === '2') { return { label: 'fixed', cls: 'ok' }; }
+    if (s === 'closed' || s === '4') { return { label: 'closed', cls: 'ok' }; }
+    if (s === 'wontfix' || s === '3') { return { label: "won't fix", cls: 'ok' }; }
+    if (s === 'bydesign' || s === '5') { return { label: 'by design', cls: 'ok' }; }
+    if (s === 'pending' || s === '6') { return { label: 'pending', cls: 'warn' }; }
+    if (s === 'active' || s === '1') { return { label: 'active', cls: 'warn' }; }
+    return { label: s, cls: '' };
+  }
+  function loadResolution(pr, id) {
+    if (!pr || resLoaded[id]) { return; }
+    var spans = pr.querySelectorAll('.res[data-thread]');
+    if (!spans.length) { resLoaded[id] = true; return; }
+    resLoaded[id] = true;
+    fetch('/api/pr-threads?prId=' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (p) {
+      var map = {}; (p.threads || []).forEach(function (t) { map[t.threadId] = t.status; });
+      for (var i = 0; i < spans.length; i++) {
+        var tid = spans[i].getAttribute('data-thread');
+        if (map[tid] !== undefined) { var info = resInfo(map[tid]); spans[i].className = 'res ' + info.cls; spans[i].textContent = info.label; spans[i].title = 'ADO thread: ' + info.label; }
+      }
+    }).catch(function () { resLoaded[id] = false; });
+  }
   document.getElementById('reviews').addEventListener('click', function (e) {
     var head = e.target.closest ? e.target.closest('.pr-head') : null;
     if (!head || e.target.closest('a')) { return; }
@@ -578,7 +635,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var willOpen = !pr.classList.contains('open');
     pr.classList.toggle('open', willOpen);
     head.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-    if (willOpen) { expanded[id] = true; try { history.replaceState(null, '', '#pr-' + id); } catch (err) {} } else { delete expanded[id]; }
+    if (willOpen) { expanded[id] = true; try { history.replaceState(null, '', '#pr-' + id); } catch (err) {} loadResolution(pr, id); } else { delete expanded[id]; }
   });
   var newPill = document.getElementById('newPill');
   function showNewPill() { newPill.classList.add('show'); }
@@ -589,11 +646,24 @@ const DASHBOARD_HTML = `<!doctype html>
   function metric(label, value, color) {
     return '<span class="metric">' + (color ? '<span class="swatch" style="background:' + color + '"></span>' : '') + esc(label) + ' <b>' + value + '</b></span>';
   }
+  function sparklineHtml(daily) {
+    if (!daily || !daily.length) { return ''; }
+    var max = 1;
+    for (var i = 0; i < daily.length; i++) { if (daily[i].count > max) { max = daily[i].count; } }
+    return '<span class="spark">' + daily.map(function (d) {
+      var barHeight = Math.max(2, Math.round((20 * d.count) / max));
+      return '<span class="sb" style="height:' + barHeight + 'px" title="' + esc(d.day) + ': ' + d.count + '"></span>';
+    }).join('') + '</span>';
+  }
   function renderHealth(s) {
     var el = document.getElementById('health');
     if (!s || !s.total) { el.style.display = 'none'; return; }
     el.style.display = 'flex';
-    var sev = s.bySeverity || {}; var cat = s.byCategory || {};
+    var sev = s.bySeverity || {}; var cat = s.byCategory || {}; var eb = s.errorBreakdown || {};
+    var errKeys = Object.keys(eb);
+    var errHtml = errKeys.length
+      ? '<div class="group"><span class="glabel">Error causes</span>' + errKeys.map(function (k) { return metric(k, eb[k], k === 'timeout' ? 'var(--err)' : ''); }).join('') + '</div>'
+      : '';
     el.innerHTML =
       '<div class="group"><span class="glabel">Health</span>' + metric('reviewed', num(s.reviewed), 'var(--ok)')
         + metric('clean', num(s.noFindings), 'var(--accent)') + metric('errors', num(s.error), 'var(--err)')
@@ -602,22 +672,44 @@ const DASHBOARD_HTML = `<!doctype html>
         + metric('minor', num(sev.minor)) + metric('nit', num(sev.nit)) + '</div>'
       + '<div class="group"><span class="glabel">Aspects</span>' + metric('security', num(cat.security), '#ff8497') + metric('privacy', num(cat.privacy), '#ff8497')
         + metric('correctness', num(cat.correctness)) + metric('design', num(cat.design)) + metric('api', num(cat.api)) + metric('testing', num(cat.testing)) + '</div>'
-      + '<div class="group"><span class="glabel">Throughput</span>' + metric('24h', num(s.reviewedToday)) + metric('7d', num(s.reviewedWeek)) + '</div>';
+      + errHtml
+      + '<div class="group"><span class="glabel">Throughput</span>' + metric('24h', num(s.reviewedToday)) + metric('7d', num(s.reviewedWeek))
+        + (s.avgDurationMs ? '<span class="metric">avg <b>' + esc(fmtDur(s.avgDurationMs)) + '</b></span>' : '') + sparklineHtml(s.daily) + '</div>';
   }
-  function loadStats() { fetch('/api/stats').then(function (r) { return r.json(); }).then(renderHealth).catch(function () {}); }
+  function renderInsights(s) {
+    var box = document.getElementById('insightsBox'); var body = document.getElementById('insightsBody');
+    if (!box || !body) { return; }
+    var titles = s && s.topTitles ? s.topTitles : []; var files = s && s.topFiles ? s.topFiles : [];
+    if (!titles.length && !files.length) { box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    var t = titles.map(function (x) { return '<div class="scan-row"><span class="tag">x' + x.count + '</span><span>' + esc(x.title) + '</span></div>'; }).join('');
+    var f = files.map(function (x) { return '<div class="scan-row"><span class="tag">x' + x.count + '</span><span class="path">' + esc(x.path) + '</span></div>'; }).join('');
+    body.innerHTML = '<div class="glabel">Recurring findings</div>' + (t || '<div class="muted">None yet.</div>')
+      + '<div class="glabel" style="margin-top:10px">File hotspots</div>' + (f || '<div class="muted">None yet.</div>');
+  }
+  function loadStats() { fetch('/api/stats').then(function (r) { return r.json(); }).then(function (s) { renderHealth(s); renderInsights(s); }).catch(function () {}); }
   function renderAgent(s) {
     var body = document.getElementById('agentBody'); if (!body) { return; }
     var c = s.config || {};
+    var repo = (c.organization || '') + '/' + (c.project || '') + '/' + (c.repositoryName || '');
     var cfg = '<div class="agent-cfg"><span>model <b style="color:var(--text)">' + esc(c.model || '-') + '</b></span>'
       + '<span>effort ' + esc(c.reasoningEffort || '-') + '</span>'
+      + '<span>repo <b style="color:var(--text)">' + esc(repo) + '</b></span>'
+      + '<span>branch ' + esc(c.defaultBranch || '-') + '</span>'
+      + (c.commit ? '<span>build ' + esc(String(c.commit).slice(0, 8)) + '</span>' : '')
       + '<span>scan every ' + Math.round(num(c.scanIntervalMs) / 60000) + 'm</span>'
       + '<span>cap ' + num(c.maxReviews) + ' reviews / ' + num(c.maxComments) + ' comments</span>'
       + '<span>uptime ' + (s.startedAt ? esc(fmtRel(s.startedAt)) : '-') + '</span></div>';
+    var up = s.upNext || [];
+    var upHtml = up.length
+      ? '<div class="scan-row"><span class="glabel">Up next</span><span>' + up.slice(0, 8).map(function (p) { return '#' + p.id; }).join(', ') + '</span></div>'
+      : '';
     var scans = (s.recentScans || []).map(function (r) {
       return '<div class="scan-row"><span>' + esc(fmtRel(r.at)) + '</span><span>' + esc(r.kind) + '</span><span>scanned ' + num(r.scanned)
-        + '</span><span>reviewed ' + num(r.reviewed) + '</span>' + (r.errors ? '<span style="color:var(--err)">errors ' + num(r.errors) + '</span>' : '') + '</div>';
+        + '</span><span>reviewed ' + num(r.reviewed) + '</span>' + (r.skipped ? '<span>skipped ' + num(r.skipped) + '</span>' : '')
+        + (r.errors ? '<span style="color:var(--err)">errors ' + num(r.errors) + '</span>' : '') + '</div>';
     }).join('');
-    body.innerHTML = cfg + (scans || '<div class="scan-row" style="border:0;padding:0">No scans yet this session.</div>');
+    body.innerHTML = cfg + upHtml + (scans || '<div class="scan-row" style="border:0;padding:0">No scans yet this session.</div>');
   }
 
   function renderFeedback(items) {
@@ -636,6 +728,13 @@ const DASHBOARD_HTML = `<!doctype html>
   function loadFeedback() {
     fetch('/api/feedback').then(function (r) { return r.json(); }).then(function (p) { renderFeedback(p.feedback || []); }).catch(function () {});
   }
+  function tickTimer() {
+    var el = document.getElementById('curElapsed');
+    if (el && curStartedAt) {
+      var ms = Date.now() - new Date(curStartedAt).getTime();
+      if (!isNaN(ms) && ms >= 0) { el.textContent = fmtDur(ms); }
+    }
+  }
   function applyState(s) {
     var badge = document.getElementById('status');
     badge.className = 'status ' + (s.running ? 'on' : 'off');
@@ -645,7 +744,11 @@ const DASHBOARD_HTML = `<!doctype html>
     document.getElementById('reviewedCount').textContent = s.reviewedPullRequestCount;
     var ls = document.getElementById('lastScan'); ls.textContent = fmtRel(s.lastScanAt); ls.title = fmtAbs(s.lastScanAt);
     var cur = document.getElementById('current');
-    cur.innerHTML = s.currentPullRequest ? '<a href="' + esc(s.currentPullRequest.webUrl) + '" target="_blank" rel="noopener">#' + s.currentPullRequest.id + '</a>' : '-';
+    curStartedAt = s.currentPullRequestStartedAt || null;
+    cur.innerHTML = s.currentPullRequest
+      ? '<a href="' + esc(s.currentPullRequest.webUrl) + '" target="_blank" rel="noopener">#' + s.currentPullRequest.id + '</a> <span id="curElapsed" class="muted" style="font-size:13px"></span>'
+      : '-';
+    tickTimer();
     renderAgent(s);
     if (isOwnerClient) {
       document.getElementById('startBtn').disabled = !!s.running;
@@ -700,6 +803,7 @@ const DASHBOARD_HTML = `<!doctype html>
   loadStats();
   loadFeedback();
   connectEvents();
+  setInterval(tickTimer, 1000);
 </script>
 </body>
 </html>`;
@@ -820,6 +924,16 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     req.on('close', () => {
       sseClients.delete(res);
     });
+    return;
+  }
+  if (method === 'GET' && url.startsWith('/api/pr-threads')) {
+    const parsed = new URL(url, 'http://localhost');
+    const prId = Number.parseInt(parsed.searchParams.get('prId') ?? '', 10);
+    if (Number.isNaN(prId)) {
+      sendJson(res, 400, { error: 'invalid prId' });
+      return;
+    }
+    sendJson(res, 200, { threads: await service.getThreadStatuses(prId) });
     return;
   }
   if (method === 'GET' && url === '/api/stats') {

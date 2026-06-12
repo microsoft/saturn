@@ -1,7 +1,15 @@
+import { getExistingThreadComments } from './ado';
+import { AZURE_DEVOPS_CONFIG, BOT_REVIEW_MARKER } from './config';
 import { defaultManagedCloneDir, installRepoDependenciesInBackground } from './git';
 import type { ReviewOutcome } from './reviewPullRequest';
 import { runSaturn, type SaturnProgressEvent, type SaturnRunSummary } from './runSaturn';
-import { getReviewSummary, readReviewsCursor, readReviewStats, type ReviewFilters, type ReviewStats } from './saturnStore';
+import {
+  getReviewSummary,
+  readReviewsCursor,
+  readReviewStats,
+  type ReviewFilters,
+  type ReviewStats
+} from './saturnStore';
 import type { Logger } from './util';
 
 const MASTER_UPDATE_INTERVAL_MS = 2 * 60 * 60 * 1000; // refresh the clone's master at most every 2 hours
@@ -34,6 +42,8 @@ export interface SaturnIterationRecord {
   readonly diffTruncated?: boolean;
   readonly candidatesProposed?: number;
   readonly candidatesKept?: number;
+  readonly reasoningEffort?: string;
+  readonly iterationCreatedAt?: string;
 }
 
 /** A reviewed pull request, with one entry per reviewed iteration (newest iteration last). */
@@ -59,6 +69,19 @@ export interface SaturnCurrentPullRequest {
   readonly webUrl: string;
 }
 
+/** A pull request queued for review this cycle (for the up-next list). */
+export interface SaturnUpNext {
+  readonly id: number;
+  readonly title: string;
+}
+
+/** The current ADO status of one of Saturn's comment threads (for the human-resolution signal). */
+export interface SaturnThreadStatus {
+  readonly threadId: number;
+  readonly status: string;
+  readonly isSaturn: boolean;
+}
+
 /** A snapshot of how the agent is configured (shown on the dashboard). */
 export interface SaturnConfigSnapshot {
   readonly model: string;
@@ -66,6 +89,12 @@ export interface SaturnConfigSnapshot {
   readonly scanIntervalMs: number;
   readonly maxReviews: number;
   readonly maxComments: number;
+  readonly host: string;
+  readonly organization: string;
+  readonly project: string;
+  readonly repositoryName: string;
+  readonly defaultBranch: string;
+  readonly commit: string;
 }
 
 /** One past scan cycle's outcome, for the dashboard's recent-activity panel. */
@@ -75,6 +104,7 @@ export interface SaturnScanRecord {
   readonly scanned: number;
   readonly reviewed: number;
   readonly errors: number;
+  readonly skipped: number;
 }
 
 /** The live state the dashboard renders. Review history is fetched separately and paginated. */
@@ -88,6 +118,8 @@ export interface SaturnState {
   readonly reviewedPullRequestCount: number;
   readonly config: SaturnConfigSnapshot;
   readonly recentScans: readonly SaturnScanRecord[];
+  readonly currentPullRequestStartedAt: string | null;
+  readonly upNext: readonly SaturnUpNext[];
 }
 
 /** Control surface for the always-on Saturn agent. */
@@ -97,6 +129,7 @@ export interface SaturnService {
   getState(): SaturnState;
   getReviewsCursor(cursor: string | undefined, limit: number, filters?: ReviewFilters): SaturnReviewsCursorPage;
   getReviewStats(): ReviewStats;
+  getThreadStatuses(pullRequestId: number): Promise<readonly SaturnThreadStatus[]>;
 }
 
 /** Configuration for the Saturn agent loop. */
@@ -143,13 +176,21 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
   let startedAt: string | null = null;
   let lastScanAt: string | null = null;
   let loopRunning = false;
+  let currentPullRequestStartedAt: string | null = null;
+  let upNext: SaturnUpNext[] = [];
   const recentScans: SaturnScanRecord[] = [];
   const configSnapshot: SaturnConfigSnapshot = {
     model: config.model,
     reasoningEffort: config.reasoningEffort,
     scanIntervalMs: config.scanIntervalMs,
     maxReviews: config.maxReviews,
-    maxComments: config.maxComments
+    maxComments: config.maxComments,
+    host: AZURE_DEVOPS_CONFIG.host,
+    organization: AZURE_DEVOPS_CONFIG.organization,
+    project: AZURE_DEVOPS_CONFIG.project,
+    repositoryName: AZURE_DEVOPS_CONFIG.repositoryName,
+    defaultBranch: AZURE_DEVOPS_CONFIG.defaultBranch,
+    commit: (process.env.SATURN_COMMIT ?? '').trim()
   };
 
   // Keep a short ring of recent scan cycles so the dashboard can show what the agent has been doing.
@@ -159,7 +200,8 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
       kind,
       scanned: scan.scannedPullRequests,
       reviewed: countActualReviews(scan.outcomes),
-      errors: scan.outcomes.filter((outcome) => outcome.status === 'error').length
+      errors: scan.outcomes.filter((outcome) => outcome.status === 'error').length,
+      skipped: Math.max(0, scan.scannedPullRequests - scan.eligibleCandidates)
     });
     if (recentScans.length > 12) {
       recentScans.length = 12;
@@ -180,11 +222,17 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
       totalReviewed: summary.totalReviewed,
       reviewedPullRequestCount: summary.reviewedPullRequestCount,
       config: configSnapshot,
-      recentScans: [...recentScans]
+      recentScans: [...recentScans],
+      currentPullRequestStartedAt,
+      upNext: upNext.slice(0, 10)
     };
   }
 
   function handleProgress(event: SaturnProgressEvent): void {
+    if (event.type === 'candidates') {
+      upNext = event.pullRequests.map((pullRequest) => ({ id: pullRequest.pullRequestId, title: pullRequest.title }));
+      return;
+    }
     if (event.type === 'pr-start') {
       phase = 'reviewing';
       currentPullRequest = {
@@ -192,11 +240,14 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
         title: event.pullRequest.title,
         webUrl: event.pullRequest.webUrl
       };
+      currentPullRequestStartedAt = new Date().toISOString();
+      upNext = upNext.filter((entry) => entry.id !== event.pullRequest.pullRequestId);
       return;
     }
 
-    // runSaturn persists the review record into the shared store; here we only clear live status.
+    // pr-done: runSaturn persists the review record into the shared store; here we only clear live status.
     currentPullRequest = null;
+    currentPullRequestStartedAt = null;
     phase = running ? 'scanning' : 'stopped';
   }
 
@@ -322,6 +373,8 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
       loopRunning = false;
       phase = 'stopped';
       currentPullRequest = null;
+      currentPullRequestStartedAt = null;
+      upNext = [];
     }
   }
 
@@ -351,6 +404,21 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
     },
     getReviewStats(): ReviewStats {
       return readReviewStats();
+    },
+    async getThreadStatuses(pullRequestId: number): Promise<readonly SaturnThreadStatus[]> {
+      const repoRoot = config.cloneDir ?? defaultManagedCloneDir();
+      try {
+        const threads = await getExistingThreadComments(repoRoot, pullRequestId);
+        return threads
+          .filter((thread) => thread.threadId !== undefined)
+          .map((thread) => ({
+            threadId: thread.threadId ?? 0,
+            status: thread.status ?? '',
+            isSaturn: thread.content.includes(BOT_REVIEW_MARKER)
+          }));
+      } catch {
+        return [];
+      }
     }
   };
 }

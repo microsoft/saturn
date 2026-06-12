@@ -10,7 +10,8 @@ import { consoleLogger, type Logger } from './util';
 /** Live progress events emitted during a run (consumed by the Saturn dashboard service). */
 export type SaturnProgressEvent =
   | { readonly type: 'pr-start'; readonly pullRequest: PullRequestSummary }
-  | { readonly type: 'pr-done'; readonly pullRequest: PullRequestSummary; readonly outcome: ReviewOutcome };
+  | { readonly type: 'pr-done'; readonly pullRequest: PullRequestSummary; readonly outcome: ReviewOutcome }
+  | { readonly type: 'candidates'; readonly pullRequests: readonly PullRequestSummary[] };
 
 /** Options controlling a full run of the bot. */
 export interface SaturnOptions {
@@ -44,6 +45,8 @@ export interface SaturnOptions {
 /** Summary of a completed run. */
 export interface SaturnRunSummary {
   readonly scannedPullRequests: number;
+  /** Non-draft, non-opted-out PRs eligible for review (skipped = scanned - eligible). */
+  readonly eligibleCandidates: number;
   readonly outcomes: readonly ReviewOutcome[];
 }
 
@@ -87,6 +90,7 @@ export async function runSaturn(options: SaturnOptions): Promise<SaturnRunSummar
   }
 
   let scannedPullRequests = 0;
+  let eligibleCandidates = 0;
   let candidates: readonly PullRequestSummary[];
   if (options.specificPullRequestId !== undefined) {
     const requested = await getPullRequestById(repoRoot, options.specificPullRequestId);
@@ -99,10 +103,12 @@ export async function runSaturn(options: SaturnOptions): Promise<SaturnRunSummar
     }
 
     scannedPullRequests = candidates.length;
+    eligibleCandidates = candidates.length;
   } else {
     const activePullRequests = await listActivePullRequests(repoRoot, options.scanLimit);
     scannedPullRequests = activePullRequests.length;
     candidates = selectCandidates(activePullRequests);
+    eligibleCandidates = candidates.length;
     if (options.createdWithinDays !== undefined) {
       const cutoffMs = Date.now() - options.createdWithinDays * 24 * 60 * 60 * 1000;
       candidates = candidates.filter(
@@ -116,12 +122,14 @@ export async function runSaturn(options: SaturnOptions): Promise<SaturnRunSummar
     );
   }
 
+  options.onProgress?.({ type: 'candidates', pullRequests: candidates });
+
   if (options.listOnly) {
     for (const pullRequest of candidates) {
       logger.info(`  #${String(pullRequest.pullRequestId)} ${pullRequest.title}  (${pullRequest.authorName})`);
     }
 
-    return { scannedPullRequests, outcomes: [] };
+    return { scannedPullRequests, eligibleCandidates, outcomes: [] };
   }
 
   const cliPath = resolveCopilotCli();
@@ -207,7 +215,9 @@ export async function runSaturn(options: SaturnOptions): Promise<SaturnRunSummar
           filesChanged: outcome.filesChanged,
           diffTruncated: outcome.diffTruncated,
           candidatesProposed: outcome.candidatesProposed,
-          candidatesKept: outcome.candidatesKept
+          candidatesKept: outcome.candidatesKept,
+          reasoningEffort: outcome.reasoningEffort,
+          iterationCreatedAt: outcome.iterationCreatedAt
         },
         outcome.status === 'reviewed' || outcome.status === 'no-findings'
       );
@@ -219,5 +229,5 @@ export async function runSaturn(options: SaturnOptions): Promise<SaturnRunSummar
   }
 
   summarizeOutcomes(outcomes, logger);
-  return { scannedPullRequests, outcomes };
+  return { scannedPullRequests, eligibleCandidates, outcomes };
 }
