@@ -9,3 +9,6 @@ process.env.SATURN_ADO_REPO_ID =
   process.env.SATURN_ADO_REPO_ID || "test-repo-id";
 process.env.SATURN_ADO_REPO_NAME =
   process.env.SATURN_ADO_REPO_NAME || "test-repo";
+process.env.SATURN_REPO_URL =
+  process.env.SATURN_REPO_URL ||
+  "https://dev.azure.com/test-org/test-project/_git/test-repo";
