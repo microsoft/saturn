@@ -134,6 +134,15 @@ const DASHBOARD_HTML = `<!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Saturn - PR Review Agent</title>
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('saturn-theme');
+      var theme = saved || (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      document.documentElement.setAttribute('data-theme', theme);
+    } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+  })();
+</script>
 <style>
   :root {
     color-scheme: dark;
@@ -157,6 +166,29 @@ const DASHBOARD_HTML = `<!doctype html>
     --shadow: 0 12px 34px rgba(0,0,0,.38);
     --ring: 0 0 0 3px rgba(91,124,250,.35);
   }
+  [data-theme="light"] {
+    color-scheme: light;
+    --bg: #f4f6fc;
+    --panel: #ffffff;
+    --panel-2: #f7f9ff;
+    --panel-3: #eef1fb;
+    --border: #d3d9ec;
+    --border-soft: #e4e8f5;
+    --text: #1a2138;
+    --muted: #55608a;
+    --muted-2: #7b85ab;
+    --accent: #3a5bd9;
+    --accent-2: #3552c8;
+    --accent-press: #2c46ad;
+    --ok: #1a9e6e;
+    --err: #d63a55;
+    --warn: #b5781a;
+    --shadow: 0 10px 28px rgba(31,45,90,.14);
+    --ring: 0 0 0 3px rgba(58,91,217,.3);
+  }
+  [data-theme="light"] body { background: radial-gradient(1100px 560px at 82% -8%, #e6ecff 0%, rgba(244,246,252,0) 58%), radial-gradient(820px 460px at -5% -5%, #eef1fb 0%, rgba(244,246,252,0) 55%), var(--bg); }
+  [data-theme="light"] header { background: rgba(255,255,255,.74); }
+  [data-theme="light"] .pr-head:hover { background: rgba(0,0,0,.03); }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
   body {
@@ -200,6 +232,9 @@ const DASHBOARD_HTML = `<!doctype html>
   .btn:active { transform: translateY(1px); }
   .btn.danger { background:#b3263b; }
   .btn.danger:hover { background:#cc2c44; }
+  .btn.ghost { background:var(--panel-3); color:var(--text); border:1px solid var(--border); }
+  .btn.ghost:hover { background:var(--border-soft); }
+  .btn.sm { padding:6px 12px; font-size:12.5px; }
   .btn:disabled { opacity:.4; cursor:default; transform:none; }
   :focus-visible { outline:none; box-shadow: var(--ring); }
   main { padding:26px 28px 80px; max-width:1080px; margin:0 auto; }
@@ -253,6 +288,31 @@ const DASHBOARD_HTML = `<!doctype html>
   .new-pill.show { opacity:1; transform: translateX(-50%) translateY(0); pointer-events:auto; }
   .fb { background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px 16px; margin-bottom:10px; }
   .fb .meta { font-size:12px; color:var(--muted-2); }
+  .health { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; background: linear-gradient(180deg, var(--panel-2), var(--panel)); border:1px solid var(--border-soft); border-radius:var(--radius); padding:12px 16px; margin-bottom:14px; }
+  .health .group { display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+  .health .glabel { font-size:11px; text-transform:uppercase; letter-spacing:.4px; color:var(--muted-2); }
+  .metric { font-size:12.5px; color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
+  .metric b { color:var(--text); font-variant-numeric:tabular-nums; }
+  .metric .swatch { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  .agent { background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius); margin-bottom:14px; padding:0 14px; }
+  .agent > summary { cursor:pointer; padding:11px 2px; font-size:12.5px; color:var(--muted); list-style:none; }
+  .agent > summary::-webkit-details-marker { display:none; }
+  .agent > summary::before { content:'\\25B8'; margin-right:8px; color:var(--muted-2); }
+  .agent[open] > summary::before { content:'\\25BE'; }
+  .agent-body { padding:0 0 12px; font-size:12.5px; color:var(--muted); display:flex; flex-direction:column; gap:7px; }
+  .agent-cfg { display:flex; flex-wrap:wrap; gap:6px 16px; }
+  .scan-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; border-top:1px solid var(--border-soft); padding-top:6px; }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:16px; }
+  .f-input { background:var(--panel-2); color:var(--text); border:1px solid var(--border); border-radius:9px; padding:7px 10px; font:inherit; font-size:13px; }
+  .f-input::placeholder { color:var(--muted-2); }
+  .f-range { display:inline-flex; align-items:center; gap:6px; flex-wrap:wrap; }
+  .chip-btn { background:var(--panel-3); color:var(--muted); border:1px solid var(--border-soft); border-radius:999px; padding:6px 11px; font-size:12px; cursor:pointer; }
+  .chip-btn:hover, .chip-btn.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .meta-row { display:flex; flex-wrap:wrap; gap:6px 12px; font-size:11.5px; color:var(--muted-2); margin:2px 0 12px; }
+  .meta-row .tag { background:var(--panel-3); border:1px solid var(--border-soft); border-radius:6px; padding:2px 8px; }
+  .meta-row .tag.warn { color:var(--warn); border-color:rgba(255,180,84,.3); }
+  .cat { font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; padding:2px 7px; border-radius:6px; background:var(--panel-3); color:var(--muted); border:1px solid var(--border-soft); }
+  .cat.security, .cat.privacy { background:rgba(255,93,115,.14); color:#ff8497; border-color:rgba(255,93,115,.32); }
   @media (max-width: 620px) { header { padding:12px 16px; gap:10px; } main { padding:18px 14px 70px; } .pr-meta { display:none; } }
 </style>
 </head>
@@ -262,6 +322,7 @@ const DASHBOARD_HTML = `<!doctype html>
   <span id="status" class="status off"><span class="dot"></span><span id="statusText">stopped</span></span>
   <span id="phase" class="phase"></span>
   <div class="spacer"></div>
+  <button id="themeBtn" class="btn ghost" type="button" title="Toggle light/dark" aria-label="Toggle theme">&#9790;</button>
   <button id="startBtn" class="btn">Start</button>
   <button id="stopBtn" class="btn danger">Stop</button>
 </header>
@@ -272,7 +333,37 @@ const DASHBOARD_HTML = `<!doctype html>
     <div class="stat"><div class="k">Currently reviewing</div><div class="v" id="current">-</div></div>
     <div class="stat"><div class="k">Last scan</div><div class="v" id="lastScan">-</div></div>
   </div>
+  <div id="health" class="health"></div>
+  <details id="agentBox" class="agent"><summary>Agent details</summary><div id="agentBody" class="agent-body"></div></details>
   <div class="section-head"><h2>Reviewed pull requests</h2><span id="prCount" class="count-chip"></span></div>
+  <div id="filters" class="filters">
+    <input id="fSearch" class="f-input" type="search" placeholder="Search id, title, author" />
+    <select id="fStatus" class="f-input" aria-label="Status filter">
+      <option value="">All statuses</option>
+      <option value="has-findings">Has findings</option>
+      <option value="reviewed">Reviewed</option>
+      <option value="no-findings">Clean</option>
+      <option value="error">Errors</option>
+    </select>
+    <select id="fCategory" class="f-input" aria-label="Aspect filter">
+      <option value="">All aspects</option>
+      <option value="security">Security</option>
+      <option value="privacy">Privacy</option>
+      <option value="correctness">Correctness</option>
+      <option value="design">Design</option>
+      <option value="api">API</option>
+      <option value="testing">Testing</option>
+    </select>
+    <input id="fAuthor" class="f-input" type="text" placeholder="Author" />
+    <span class="f-range">
+      <button class="chip-btn" type="button" data-range="1">24h</button>
+      <button class="chip-btn" type="button" data-range="7">7d</button>
+      <button class="chip-btn" type="button" data-range="30">30d</button>
+      <input id="fFrom" class="f-input" type="date" aria-label="From date" />
+      <input id="fTo" class="f-input" type="date" aria-label="To date" />
+    </span>
+    <button id="fClear" class="btn ghost sm" type="button">Clear</button>
+  </div>
   <div id="reviews"></div>
   <div id="sentinel" class="sentinel"></div>
   <div id="loader" class="loader" style="display:none"><span class="spinner"></span> Loading&hellip;</div>
@@ -296,6 +387,13 @@ const DASHBOARD_HTML = `<!doctype html>
     var d = Math.floor(h / 24); if (d < 30) { return d + 'd ago'; }
     return new Date(t).toLocaleDateString();
   };
+  var fmtDur = function (ms) {
+    if (ms == null || isNaN(ms)) { return ''; }
+    var s = Math.round(ms / 1000);
+    if (s < 60) { return s + 's'; }
+    var m = Math.floor(s / 60); var r = s % 60;
+    return m + 'm' + (r ? ' ' + r + 's' : '');
+  };
   var sevClass = function (s) {
     var k = String(s || '').toLowerCase();
     if (k.indexOf('block') >= 0) { return 'sev-block'; }
@@ -306,6 +404,7 @@ const DASHBOARD_HTML = `<!doctype html>
   };
   var statusClass = function (s) { return (s === 'reviewed' || s === 'no-findings') ? 'ok' : (s === 'error' ? 'err' : 'neutral'); };
   var statusLabel = function (s) { return s === 'no-findings' ? 'clean' : String(s || ''); };
+  var num = function (v) { return typeof v === 'number' && !isNaN(v) ? v : 0; };
 
   var loaded = [];
   var loadedIds = {};
@@ -317,17 +416,42 @@ const DASHBOARD_HTML = `<!doctype html>
   var firstStateApplied = false;
   var isOwnerClient = false;
   var LIMIT = 12;
+  var filters = { search: '', status: '', category: '', author: '', fromMs: null, toMs: null };
 
   var post = function (p) { fetch(p, { method: 'POST' }).then(function () { return fetch('/api/state'); }).then(function (r) { return r.json(); }).then(applyState).catch(function () {}); };
   document.getElementById('startBtn').onclick = function () { post('/api/start'); };
   document.getElementById('stopBtn').onclick = function () { post('/api/stop'); };
 
+  function hasActiveFilters() { return !!(filters.search || filters.status || filters.category || filters.author || filters.fromMs || filters.toMs); }
+  function reviewsUrl() {
+    var q = 'limit=' + LIMIT + (nextCursor ? '&cursor=' + encodeURIComponent(nextCursor) : '');
+    if (filters.search) { q += '&search=' + encodeURIComponent(filters.search); }
+    if (filters.status) { q += '&status=' + encodeURIComponent(filters.status); }
+    if (filters.category) { q += '&category=' + encodeURIComponent(filters.category); }
+    if (filters.author) { q += '&author=' + encodeURIComponent(filters.author); }
+    if (filters.fromMs) { q += '&from=' + filters.fromMs; }
+    if (filters.toMs) { q += '&to=' + filters.toMs; }
+    return '/api/reviews?' + q;
+  }
+
   function renderComment(c) {
     var sc = sevClass(c.severity);
+    var cat = c.category ? '<span class="cat ' + esc(c.category) + '">' + esc(c.category) + '</span>' : '';
     var open = c.deepLink ? ' &middot; <a href="' + esc(c.deepLink) + '" target="_blank" rel="noopener">open comment</a>' : '';
-    return '<div class="comment ' + sc + '"><div class="loc"><span class="chip ' + sc + '">' + esc(c.severity) + '</span>'
+    return '<div class="comment ' + sc + '"><div class="loc"><span class="chip ' + sc + '">' + esc(c.severity) + '</span>' + cat
       + '<span class="path">' + esc(c.filePath) + ':' + c.line + '</span>' + open + '</div>'
       + '<div class="c-title">' + esc(c.title) + '</div><div class="c-body">' + esc(c.body) + '</div></div>';
+  }
+  function iterMeta(it) {
+    var parts = [];
+    if (it.model) { parts.push('<span class="tag">' + esc(it.model) + '</span>'); }
+    if (it.durationMs != null) { parts.push('<span class="tag">' + esc(fmtDur(it.durationMs)) + '</span>'); }
+    if (it.filesReviewed != null) {
+      var partial = it.diffTruncated || (it.filesChanged != null && it.filesChanged > it.filesReviewed);
+      parts.push('<span class="tag' + (partial ? ' warn' : '') + '">' + it.filesReviewed + (it.filesChanged != null ? '/' + it.filesChanged : '') + ' files' + (partial ? ' (truncated)' : '') + '</span>');
+    }
+    if (it.candidatesProposed != null) { parts.push('<span class="tag">verified ' + num(it.candidatesKept) + '/' + it.candidatesProposed + '</span>'); }
+    return parts.length ? '<div class="meta-row">' + parts.join('') + '</div>' : '';
   }
   function renderIteration(it) {
     var comments = (it.comments || []).map(renderComment).join('');
@@ -336,7 +460,7 @@ const DASHBOARD_HTML = `<!doctype html>
     return '<div class="iter"><div class="iter-head"><span class="pill ' + statusClass(it.status) + '">' + esc(statusLabel(it.status)) + '</span>'
       + '<span>Iteration #' + it.iterationId + '</span><span>&middot;</span><span>' + it.commentsPosted + ' comment(s)</span><span>&middot;</span>'
       + '<span title="' + esc(fmtAbs(it.reviewedAt)) + '">' + esc(fmtRel(it.reviewedAt)) + '</span></div>'
-      + detail + (comments || fallback) + '</div>';
+      + iterMeta(it) + detail + (comments || fallback) + '</div>';
   }
   function cardHtml(r) {
     var iterations = (r.iterations || []).slice().sort(function (a, b) { return b.iterationId - a.iterationId; });
@@ -344,11 +468,14 @@ const DASHBOARD_HTML = `<!doctype html>
     var bodyId = 'pr-body-' + r.pullRequestId;
     var isOpen = !!expanded[r.pullRequestId];
     var iterHtml = iterations.map(renderIteration).join('');
+    var catSet = {};
+    iterations.forEach(function (it) { (it.comments || []).forEach(function (c) { if (c.category) { catSet[c.category] = 1; } }); });
+    var catChips = Object.keys(catSet).map(function (k) { return '<span class="cat ' + esc(k) + '">' + esc(k) + '</span>'; }).join('');
     return '<div class="pr' + (isOpen ? ' open' : '') + '" data-id="' + r.pullRequestId + '">'
       + '<button class="pr-head" aria-expanded="' + (isOpen ? 'true' : 'false') + '" aria-controls="' + bodyId + '">'
       + '<span class="chevron">&#8250;</span><span class="pr-id">#' + r.pullRequestId + '</span>'
       + '<span class="pr-title">' + esc(r.title) + '</span>'
-      + '<span class="pr-sub"><span class="pr-meta">' + esc(r.author) + ' &middot; ' + iterations.length + ' iter &middot; ' + esc(fmtRel(latest.reviewedAt)) + '</span>'
+      + '<span class="pr-sub">' + catChips + '<span class="pr-meta">' + esc(r.author) + ' &middot; ' + iterations.length + ' iter &middot; ' + esc(fmtRel(latest.reviewedAt)) + '</span>'
       + '<span class="pill ' + statusClass(latest.status) + '">' + esc(statusLabel(latest.status)) + '</span></span></button>'
       + '<div class="pr-body" id="' + bodyId + '" role="region"><div class="pr-body-inner"><div class="pr-body-pad">'
       + '<div class="iter-head" style="margin-bottom:12px"><a href="' + esc(r.webUrl) + '" target="_blank" rel="noopener">Open PR #' + r.pullRequestId + ' in Azure DevOps &#8599;</a></div>'
@@ -370,19 +497,20 @@ const DASHBOARD_HTML = `<!doctype html>
     if (loading || reachedEnd) { return; }
     loading = true;
     document.getElementById('loader').style.display = 'flex';
-    var q = '/api/reviews?limit=' + LIMIT + (nextCursor ? '&cursor=' + encodeURIComponent(nextCursor) : '');
-    fetch(q).then(function (r) { return r.json(); }).then(function (p) {
+    fetch(reviewsUrl()).then(function (r) { return r.json(); }).then(function (p) {
       var items = p.items || [];
-      if (!loaded.length && !items.length) { document.getElementById('reviews').innerHTML = '<div class="empty">No pull requests reviewed yet. Saturn will list them here as it reviews.</div>'; }
+      if (!loaded.length && !items.length) {
+        document.getElementById('reviews').innerHTML = '<div class="empty">' + (hasActiveFilters() ? 'No pull requests match these filters.' : 'No pull requests reviewed yet. Saturn will list them here as it reviews.') + '</div>';
+      }
       if (!loaded.length && items.length && Object.keys(expanded).length === 0) { expanded[items[0].pullRequestId] = true; }
       appendReviews(items);
       nextCursor = p.nextCursor || null;
       reachedEnd = !nextCursor;
-      document.getElementById('prCount').textContent = (p.total || 0) + ' total';
+      document.getElementById('prCount').textContent = (p.total || 0) + (hasActiveFilters() ? ' match' : ' total');
       loading = false;
       document.getElementById('loader').style.display = 'none';
       var en = document.getElementById('endNote');
-      if (reachedEnd && loaded.length) { en.style.display = 'block'; en.textContent = 'All ' + loaded.length + ' reviewed PR(s).'; } else { en.style.display = 'none'; }
+      if (reachedEnd && loaded.length) { en.style.display = 'block'; en.textContent = 'All ' + loaded.length + ' PR(s)' + (hasActiveFilters() ? ' matching the filters.' : '.'); } else { en.style.display = 'none'; }
       maybeLoadMore();
     }).catch(function () { loading = false; document.getElementById('loader').style.display = 'none'; });
   }
@@ -397,6 +525,52 @@ const DASHBOARD_HTML = `<!doctype html>
     hideNewPill();
     loadMore();
   }
+
+  function readFilterInputs() {
+    filters.search = document.getElementById('fSearch').value.trim();
+    filters.status = document.getElementById('fStatus').value;
+    filters.category = document.getElementById('fCategory').value;
+    filters.author = document.getElementById('fAuthor').value.trim();
+    var from = document.getElementById('fFrom').value;
+    var to = document.getElementById('fTo').value;
+    filters.fromMs = from ? new Date(from + 'T00:00:00').getTime() : null;
+    filters.toMs = to ? new Date(to + 'T23:59:59').getTime() : null;
+  }
+  function applyFilters() { readFilterInputs(); refreshFromTop(); }
+  function clearRangeChips() { var c = document.querySelectorAll('.chip-btn[data-range]'); for (var i = 0; i < c.length; i++) { c[i].classList.remove('active'); } }
+  var filterDebounce = null;
+  function debouncedApply() { if (filterDebounce) { clearTimeout(filterDebounce); } filterDebounce = setTimeout(applyFilters, 320); }
+  document.getElementById('fSearch').addEventListener('input', debouncedApply);
+  document.getElementById('fAuthor').addEventListener('input', debouncedApply);
+  document.getElementById('fStatus').addEventListener('change', applyFilters);
+  document.getElementById('fCategory').addEventListener('change', applyFilters);
+  document.getElementById('fFrom').addEventListener('change', function () { clearRangeChips(); applyFilters(); });
+  document.getElementById('fTo').addEventListener('change', function () { clearRangeChips(); applyFilters(); });
+  var rangeChips = document.querySelectorAll('.chip-btn[data-range]');
+  for (var ri = 0; ri < rangeChips.length; ri++) {
+    rangeChips[ri].addEventListener('click', function (e) {
+      var chip = e.currentTarget;
+      var wasActive = chip.classList.contains('active');
+      var days = parseInt(chip.getAttribute('data-range'), 10);
+      clearRangeChips();
+      document.getElementById('fTo').value = '';
+      if (wasActive) {
+        document.getElementById('fFrom').value = '';
+      } else {
+        chip.classList.add('active');
+        document.getElementById('fFrom').value = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+      }
+      applyFilters();
+    });
+  }
+  document.getElementById('fClear').onclick = function () {
+    document.getElementById('fSearch').value = ''; document.getElementById('fStatus').value = ''; document.getElementById('fCategory').value = '';
+    document.getElementById('fAuthor').value = ''; document.getElementById('fFrom').value = ''; document.getElementById('fTo').value = '';
+    clearRangeChips();
+    filters = { search: '', status: '', category: '', author: '', fromMs: null, toMs: null };
+    refreshFromTop();
+  };
+
   document.getElementById('reviews').addEventListener('click', function (e) {
     var head = e.target.closest ? e.target.closest('.pr-head') : null;
     if (!head || e.target.closest('a')) { return; }
@@ -404,12 +578,47 @@ const DASHBOARD_HTML = `<!doctype html>
     var willOpen = !pr.classList.contains('open');
     pr.classList.toggle('open', willOpen);
     head.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
-    if (willOpen) { expanded[id] = true; } else { delete expanded[id]; }
+    if (willOpen) { expanded[id] = true; try { history.replaceState(null, '', '#pr-' + id); } catch (err) {} } else { delete expanded[id]; }
   });
   var newPill = document.getElementById('newPill');
   function showNewPill() { newPill.classList.add('show'); }
   function hideNewPill() { newPill.classList.remove('show'); }
   newPill.onclick = function () { window.scrollTo({ top: 0, behavior: 'smooth' }); refreshFromTop(); };
+
+  function pct(n, d) { return d > 0 ? Math.round((100 * n) / d) : 0; }
+  function metric(label, value, color) {
+    return '<span class="metric">' + (color ? '<span class="swatch" style="background:' + color + '"></span>' : '') + esc(label) + ' <b>' + value + '</b></span>';
+  }
+  function renderHealth(s) {
+    var el = document.getElementById('health');
+    if (!s || !s.total) { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    var sev = s.bySeverity || {}; var cat = s.byCategory || {};
+    el.innerHTML =
+      '<div class="group"><span class="glabel">Health</span>' + metric('reviewed', num(s.reviewed), 'var(--ok)')
+        + metric('clean', num(s.noFindings), 'var(--accent)') + metric('errors', num(s.error), 'var(--err)')
+        + '<span class="metric">error rate <b>' + pct(num(s.error), num(s.total)) + '%</b></span></div>'
+      + '<div class="group"><span class="glabel">Findings</span>' + metric('blocking', num(sev.blocking)) + metric('major', num(sev.major))
+        + metric('minor', num(sev.minor)) + metric('nit', num(sev.nit)) + '</div>'
+      + '<div class="group"><span class="glabel">Aspects</span>' + metric('security', num(cat.security), '#ff8497') + metric('privacy', num(cat.privacy), '#ff8497')
+        + metric('correctness', num(cat.correctness)) + metric('design', num(cat.design)) + metric('api', num(cat.api)) + metric('testing', num(cat.testing)) + '</div>'
+      + '<div class="group"><span class="glabel">Throughput</span>' + metric('24h', num(s.reviewedToday)) + metric('7d', num(s.reviewedWeek)) + '</div>';
+  }
+  function loadStats() { fetch('/api/stats').then(function (r) { return r.json(); }).then(renderHealth).catch(function () {}); }
+  function renderAgent(s) {
+    var body = document.getElementById('agentBody'); if (!body) { return; }
+    var c = s.config || {};
+    var cfg = '<div class="agent-cfg"><span>model <b style="color:var(--text)">' + esc(c.model || '-') + '</b></span>'
+      + '<span>effort ' + esc(c.reasoningEffort || '-') + '</span>'
+      + '<span>scan every ' + Math.round(num(c.scanIntervalMs) / 60000) + 'm</span>'
+      + '<span>cap ' + num(c.maxReviews) + ' reviews / ' + num(c.maxComments) + ' comments</span>'
+      + '<span>uptime ' + (s.startedAt ? esc(fmtRel(s.startedAt)) : '-') + '</span></div>';
+    var scans = (s.recentScans || []).map(function (r) {
+      return '<div class="scan-row"><span>' + esc(fmtRel(r.at)) + '</span><span>' + esc(r.kind) + '</span><span>scanned ' + num(r.scanned)
+        + '</span><span>reviewed ' + num(r.reviewed) + '</span>' + (r.errors ? '<span style="color:var(--err)">errors ' + num(r.errors) + '</span>' : '') + '</div>';
+    }).join('');
+    body.innerHTML = cfg + (scans || '<div class="scan-row" style="border:0;padding:0">No scans yet this session.</div>');
+  }
 
   function renderFeedback(items) {
     var sec = document.getElementById('fbSection');
@@ -437,6 +646,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var ls = document.getElementById('lastScan'); ls.textContent = fmtRel(s.lastScanAt); ls.title = fmtAbs(s.lastScanAt);
     var cur = document.getElementById('current');
     cur.innerHTML = s.currentPullRequest ? '<a href="' + esc(s.currentPullRequest.webUrl) + '" target="_blank" rel="noopener">#' + s.currentPullRequest.id + '</a>' : '-';
+    renderAgent(s);
     if (isOwnerClient) {
       document.getElementById('startBtn').disabled = !!s.running;
       document.getElementById('stopBtn').disabled = !s.running;
@@ -445,7 +655,8 @@ const DASHBOARD_HTML = `<!doctype html>
     if (!firstStateApplied) { firstStateApplied = true; lastSig = sig; return; }
     if (sig !== lastSig) {
       lastSig = sig;
-      if (window.scrollY < 240) { refreshFromTop(); } else { showNewPill(); }
+      loadStats();
+      if (!hasActiveFilters() && window.scrollY < 240) { refreshFromTop(); } else { showNewPill(); }
       loadFeedback();
     }
   }
@@ -457,6 +668,18 @@ const DASHBOARD_HTML = `<!doctype html>
       setInterval(function () { fetch('/api/state').then(function (r) { return r.json(); }).then(applyState).catch(function () {}); }, 2500);
     }
   }
+
+  var themeBtn = document.getElementById('themeBtn');
+  function currentTheme() { return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark'; }
+  function paintThemeBtn() { themeBtn.innerHTML = currentTheme() === 'light' ? '&#9728;' : '&#9790;'; }
+  paintThemeBtn();
+  themeBtn.onclick = function () {
+    var next = currentTheme() === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', next);
+    try { localStorage.setItem('saturn-theme', next); } catch (err) {}
+    paintThemeBtn();
+  };
+
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function (entries) { if (entries[0] && entries[0].isIntersecting) { loadMore(); } }, { rootMargin: '320px' });
     io.observe(document.getElementById('sentinel'));
@@ -471,7 +694,10 @@ const DASHBOARD_HTML = `<!doctype html>
       var pb = document.getElementById('stopBtn'); if (pb) { pb.style.display = 'none'; }
     }
   }).catch(function () {});
+  var hashMatch = /^#pr-(\\d+)$/.exec(window.location.hash);
+  if (hashMatch) { expanded[hashMatch[1]] = true; }
   loadMore();
+  loadStats();
   loadFeedback();
   connectEvents();
 </script>
@@ -596,11 +822,25 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     });
     return;
   }
+  if (method === 'GET' && url === '/api/stats') {
+    sendJson(res, 200, service.getReviewStats());
+    return;
+  }
   if (method === 'GET' && url.startsWith('/api/reviews')) {
     const parsed = new URL(url, 'http://localhost');
     const cursor = parsed.searchParams.get('cursor') ?? undefined;
     const limit = Number.parseInt(parsed.searchParams.get('limit') ?? '12', 10);
-    sendJson(res, 200, service.getReviewsCursor(cursor, Number.isNaN(limit) ? 12 : limit));
+    const fromRaw = Number.parseInt(parsed.searchParams.get('from') ?? '', 10);
+    const toRaw = Number.parseInt(parsed.searchParams.get('to') ?? '', 10);
+    const filters = {
+      status: parsed.searchParams.get('status') ?? undefined,
+      category: parsed.searchParams.get('category') ?? undefined,
+      author: parsed.searchParams.get('author') ?? undefined,
+      search: parsed.searchParams.get('search') ?? undefined,
+      fromMs: Number.isNaN(fromRaw) ? undefined : fromRaw,
+      toMs: Number.isNaN(toRaw) ? undefined : toRaw
+    };
+    sendJson(res, 200, service.getReviewsCursor(cursor, Number.isNaN(limit) ? 12 : limit, filters));
     return;
   }
   if (method === 'GET' && url === '/api/whoami') {

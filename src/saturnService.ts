@@ -1,7 +1,7 @@
 import { defaultManagedCloneDir, installRepoDependenciesInBackground } from './git';
 import type { ReviewOutcome } from './reviewPullRequest';
-import { runSaturn, type SaturnProgressEvent } from './runSaturn';
-import { getReviewSummary, readReviewsCursor } from './saturnStore';
+import { runSaturn, type SaturnProgressEvent, type SaturnRunSummary } from './runSaturn';
+import { getReviewSummary, readReviewsCursor, readReviewStats, type ReviewFilters, type ReviewStats } from './saturnStore';
 import type { Logger } from './util';
 
 const MASTER_UPDATE_INTERVAL_MS = 2 * 60 * 60 * 1000; // refresh the clone's master at most every 2 hours
@@ -12,6 +12,7 @@ export interface SaturnComment {
   readonly filePath: string;
   readonly line: number;
   readonly severity: string;
+  readonly category?: string;
   readonly title: string;
   readonly body: string;
   readonly deepLink: string;
@@ -26,6 +27,13 @@ export interface SaturnIterationRecord {
   readonly detail: string;
   readonly comments: readonly SaturnComment[];
   readonly reviewedAt: string;
+  readonly durationMs?: number;
+  readonly model?: string;
+  readonly filesReviewed?: number;
+  readonly filesChanged?: number;
+  readonly diffTruncated?: boolean;
+  readonly candidatesProposed?: number;
+  readonly candidatesKept?: number;
 }
 
 /** A reviewed pull request, with one entry per reviewed iteration (newest iteration last). */
@@ -51,6 +59,24 @@ export interface SaturnCurrentPullRequest {
   readonly webUrl: string;
 }
 
+/** A snapshot of how the agent is configured (shown on the dashboard). */
+export interface SaturnConfigSnapshot {
+  readonly model: string;
+  readonly reasoningEffort: string;
+  readonly scanIntervalMs: number;
+  readonly maxReviews: number;
+  readonly maxComments: number;
+}
+
+/** One past scan cycle's outcome, for the dashboard's recent-activity panel. */
+export interface SaturnScanRecord {
+  readonly at: string;
+  readonly kind: string;
+  readonly scanned: number;
+  readonly reviewed: number;
+  readonly errors: number;
+}
+
 /** The live state the dashboard renders. Review history is fetched separately and paginated. */
 export interface SaturnState {
   readonly running: boolean;
@@ -60,6 +86,8 @@ export interface SaturnState {
   readonly lastScanAt: string | null;
   readonly totalReviewed: number;
   readonly reviewedPullRequestCount: number;
+  readonly config: SaturnConfigSnapshot;
+  readonly recentScans: readonly SaturnScanRecord[];
 }
 
 /** Control surface for the always-on Saturn agent. */
@@ -67,7 +95,8 @@ export interface SaturnService {
   start(): SaturnState;
   stop(): SaturnState;
   getState(): SaturnState;
-  getReviewsCursor(cursor: string | undefined, limit: number): SaturnReviewsCursorPage;
+  getReviewsCursor(cursor: string | undefined, limit: number, filters?: ReviewFilters): SaturnReviewsCursorPage;
+  getReviewStats(): ReviewStats;
 }
 
 /** Configuration for the Saturn agent loop. */
@@ -114,6 +143,28 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
   let startedAt: string | null = null;
   let lastScanAt: string | null = null;
   let loopRunning = false;
+  const recentScans: SaturnScanRecord[] = [];
+  const configSnapshot: SaturnConfigSnapshot = {
+    model: config.model,
+    reasoningEffort: config.reasoningEffort,
+    scanIntervalMs: config.scanIntervalMs,
+    maxReviews: config.maxReviews,
+    maxComments: config.maxComments
+  };
+
+  // Keep a short ring of recent scan cycles so the dashboard can show what the agent has been doing.
+  function pushScanRecord(scan: SaturnRunSummary, kind: string): void {
+    recentScans.unshift({
+      at: new Date().toISOString(),
+      kind,
+      scanned: scan.scannedPullRequests,
+      reviewed: countActualReviews(scan.outcomes),
+      errors: scan.outcomes.filter((outcome) => outcome.status === 'error').length
+    });
+    if (recentScans.length > 12) {
+      recentScans.length = 12;
+    }
+  }
 
   function snapshot(): SaturnState {
     // Live status lives in this process; the running total and reviewed-PR count come from the shared
@@ -127,7 +178,9 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
       startedAt,
       lastScanAt,
       totalReviewed: summary.totalReviewed,
-      reviewedPullRequestCount: summary.reviewedPullRequestCount
+      reviewedPullRequestCount: summary.reviewedPullRequestCount,
+      config: configSnapshot,
+      recentScans: [...recentScans]
     };
   }
 
@@ -192,6 +245,7 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
             logger
           });
           reviewedThisCycle = countActualReviews(scan.outcomes);
+          pushScanRecord(scan, 'scan');
         } catch (error) {
           logger.warn(`Saturn: scan failed: ${String(error)}`);
         }
@@ -241,6 +295,7 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
               logger
             });
             backfilledThisCycle = countActualReviews(backfill.outcomes);
+            pushScanRecord(backfill, 'backfill');
           } catch (error) {
             logger.warn(`Saturn: backfill scan failed: ${String(error)}`);
           }
@@ -291,8 +346,11 @@ export function createSaturnService(config: SaturnServiceConfig, logger: Logger)
     getState(): SaturnState {
       return snapshot();
     },
-    getReviewsCursor(cursor: string | undefined, limit: number): SaturnReviewsCursorPage {
-      return readReviewsCursor(cursor, limit);
+    getReviewsCursor(cursor: string | undefined, limit: number, filters?: ReviewFilters): SaturnReviewsCursorPage {
+      return readReviewsCursor(cursor, limit, filters);
+    },
+    getReviewStats(): ReviewStats {
+      return readReviewStats();
     }
   };
 }

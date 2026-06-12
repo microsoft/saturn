@@ -5,13 +5,16 @@ export type { SaturnOptions, SaturnRunSummary, SaturnProgressEvent } from './run
 export { createSaturnService } from './saturnService';
 export type {
   SaturnComment,
+  SaturnConfigSnapshot,
   SaturnIterationRecord,
   SaturnReviewRecord,
   SaturnReviewsCursorPage,
+  SaturnScanRecord,
   SaturnService,
   SaturnServiceConfig,
   SaturnState
 } from './saturnService';
+export type { ReviewFilters, ReviewStats } from './saturnStore';
 export { reviewPullRequest } from './reviewPullRequest';
 export type { ReviewOutcome, ReviewOutcomeStatus, ReviewPullRequestDeps } from './reviewPullRequest';
 export type {

@@ -9,6 +9,8 @@ export interface StoredComment {
   readonly filePath: string;
   readonly line: number;
   readonly severity: string;
+  /** Review lens/aspect (security|privacy|correctness|design|api|testing); optional on legacy records. */
+  readonly category?: string;
   readonly title: string;
   readonly body: string;
   readonly deepLink: string;
@@ -24,6 +26,18 @@ export interface StoredIterationReview {
   readonly detail: string;
   readonly comments: readonly StoredComment[];
   readonly reviewedAt: string;
+  /** How long the review took, in ms (optional on legacy records). */
+  readonly durationMs?: number;
+  /** Model that produced the review. */
+  readonly model?: string;
+  /** Files sent to the model vs. total changed (a gap means the diff was truncated). */
+  readonly filesReviewed?: number;
+  readonly filesChanged?: number;
+  /** True when the diff context was truncated (the review may be partial). */
+  readonly diffTruncated?: boolean;
+  /** Findings the first pass proposed vs. how many survived the verification gate. */
+  readonly candidatesProposed?: number;
+  readonly candidatesKept?: number;
 }
 
 /** A persisted record of a reviewed pull request, with one entry per reviewed iteration. */
@@ -45,6 +59,7 @@ const commentSchema = z.object({
   filePath: z.string(),
   line: z.number(),
   severity: z.string(),
+  category: z.string().optional(),
   title: z.string(),
   body: z.string(),
   deepLink: z.string(),
@@ -57,7 +72,14 @@ const iterationSchema = z.object({
   commentsPosted: z.number(),
   detail: z.string(),
   comments: z.array(commentSchema),
-  reviewedAt: z.string()
+  reviewedAt: z.string(),
+  durationMs: z.number().optional(),
+  model: z.string().optional(),
+  filesReviewed: z.number().optional(),
+  filesChanged: z.number().optional(),
+  diffTruncated: z.boolean().optional(),
+  candidatesProposed: z.number().optional(),
+  candidatesKept: z.number().optional()
 });
 
 const reviewSchema = z.object({
@@ -260,10 +282,86 @@ function decodeReviewCursor(raw: string | undefined): { t: number; id: number } 
   }
 }
 
-/** Read one cursor batch of reviewed pull requests, newest reviewed first (for infinite scroll). */
-export function readReviewsCursor(cursor: string | undefined, limit: number): ReviewsCursorPage {
+/** Optional filters narrowing the reviewed-PR list (all applied with AND). */
+export interface ReviewFilters {
+  /** Latest-iteration status ('reviewed' | 'no-findings' | 'error'), or 'has-findings' for any iteration with comments. */
+  readonly status?: string;
+  /** Only PRs with at least one finding in this category, across any iteration. */
+  readonly category?: string;
+  /** Case-insensitive substring of the author display name. */
+  readonly author?: string;
+  /** Case-insensitive substring matched against PR id, title, and author. */
+  readonly search?: string;
+  /** Only PRs last reviewed at or after this epoch-ms. */
+  readonly fromMs?: number;
+  /** Only PRs last reviewed at or before this epoch-ms. */
+  readonly toMs?: number;
+}
+
+/** The most-recently-reviewed iteration of a PR (highest iteration id). */
+function latestIterationOf(review: StoredReview): StoredIterationReview | undefined {
+  let latest: StoredIterationReview | undefined;
+  for (const iteration of review.iterations) {
+    if (latest === undefined || iteration.iterationId > latest.iterationId) {
+      latest = iteration;
+    }
+  }
+  return latest;
+}
+
+/** The set of finding categories Saturn ever raised on a PR (across all iterations). */
+function reviewCategories(review: StoredReview): Set<string> {
+  const categories = new Set<string>();
+  for (const iteration of review.iterations) {
+    for (const comment of iteration.comments) {
+      if (comment.category !== undefined && comment.category !== '') {
+        categories.add(comment.category);
+      }
+    }
+  }
+  return categories;
+}
+
+function matchesFilters(review: StoredReview, filters: ReviewFilters): boolean {
+  const reviewedAt = latestReviewedAtMs(review);
+  if (filters.fromMs !== undefined && reviewedAt < filters.fromMs) {
+    return false;
+  }
+  if (filters.toMs !== undefined && reviewedAt > filters.toMs) {
+    return false;
+  }
+  if (filters.status !== undefined && filters.status !== '') {
+    if (filters.status === 'has-findings') {
+      if (!review.iterations.some((iteration) => iteration.comments.length > 0)) {
+        return false;
+      }
+    } else if ((latestIterationOf(review)?.status ?? '') !== filters.status) {
+      return false;
+    }
+  }
+  if (filters.category !== undefined && filters.category !== '' && !reviewCategories(review).has(filters.category)) {
+    return false;
+  }
+  if (
+    filters.author !== undefined &&
+    filters.author !== '' &&
+    !review.author.toLowerCase().includes(filters.author.toLowerCase())
+  ) {
+    return false;
+  }
+  if (filters.search !== undefined && filters.search !== '') {
+    const haystack = `${review.title} ${review.author} ${String(review.pullRequestId)}`.toLowerCase();
+    if (!haystack.includes(filters.search.toLowerCase())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Read one cursor batch of reviewed pull requests (optionally filtered), newest reviewed first. */
+export function readReviewsCursor(cursor: string | undefined, limit: number, filters?: ReviewFilters): ReviewsCursorPage {
   const safeLimit = limit > 0 ? Math.min(limit, 100) : 25;
-  const all = readAllPullRequestReviews();
+  const all = readAllPullRequestReviews().filter((review) => filters === undefined || matchesFilters(review, filters));
   const after = decodeReviewCursor(cursor);
   let startIndex = 0;
   if (after !== undefined) {
@@ -277,6 +375,60 @@ export function readReviewsCursor(cursor: string | undefined, limit: number): Re
   const last = items.at(-1);
   const nextCursor = last !== undefined && startIndex + items.length < all.length ? encodeReviewCursor(last) : null;
   return { items, nextCursor, total: all.length };
+}
+
+/** Aggregate health/throughput stats across all reviewed PRs, for the dashboard summary. */
+export interface ReviewStats {
+  readonly total: number;
+  readonly reviewed: number;
+  readonly noFindings: number;
+  readonly error: number;
+  readonly findingsTotal: number;
+  readonly bySeverity: Record<string, number>;
+  readonly byCategory: Record<string, number>;
+  readonly reviewedToday: number;
+  readonly reviewedWeek: number;
+}
+
+/** Compute aggregate stats (status mix, severity/category breakdown, recent throughput) over all reviews. */
+export function readReviewStats(): ReviewStats {
+  const all = readAllPullRequestReviews();
+  const now = Date.now();
+  const dayAgoMs = now - 24 * 60 * 60 * 1000;
+  const weekAgoMs = now - 7 * 24 * 60 * 60 * 1000;
+  const bySeverity: Record<string, number> = {};
+  const byCategory: Record<string, number> = {};
+  let reviewed = 0;
+  let noFindings = 0;
+  let error = 0;
+  let findingsTotal = 0;
+  let reviewedToday = 0;
+  let reviewedWeek = 0;
+  for (const review of all) {
+    const latest = latestIterationOf(review);
+    const status = latest?.status ?? '';
+    if (status === 'reviewed') {
+      reviewed += 1;
+    } else if (status === 'no-findings') {
+      noFindings += 1;
+    } else if (status === 'error') {
+      error += 1;
+    }
+    const reviewedAt = latestReviewedAtMs(review);
+    if (reviewedAt >= dayAgoMs) {
+      reviewedToday += 1;
+    }
+    if (reviewedAt >= weekAgoMs) {
+      reviewedWeek += 1;
+    }
+    for (const comment of latest?.comments ?? []) {
+      findingsTotal += 1;
+      bySeverity[comment.severity] = (bySeverity[comment.severity] ?? 0) + 1;
+      const category = comment.category !== undefined && comment.category !== '' ? comment.category : 'correctness';
+      byCategory[category] = (byCategory[category] ?? 0) + 1;
+    }
+  }
+  return { total: all.length, reviewed, noFindings, error, findingsTotal, bySeverity, byCategory, reviewedToday, reviewedWeek };
 }
 
 /** Cheap summary for the dashboard status poll: running total and number of reviewed PRs. */

@@ -45,6 +45,9 @@ export interface DiffPayload {
 /** Severity levels the model may assign to a finding. */
 export type ReviewSeverity = 'blocking' | 'major' | 'minor' | 'nit';
 
+/** The review lens (aspect) a finding falls under; powers dashboard filtering and triage. */
+export type ReviewCategory = 'security' | 'privacy' | 'correctness' | 'design' | 'api' | 'testing';
+
 /**
  * Whether a finding of this severity requires the author to act. blocking/major do (their thread is posted
  * Active); minor/nit do not, so they are posted already-resolved to keep the PR's open-thread count clean.
@@ -58,6 +61,7 @@ export interface ReviewComment {
   readonly filePath: string;
   readonly line: number;
   readonly severity: ReviewSeverity;
+  readonly category: ReviewCategory;
   readonly title: string;
   readonly body: string;
 }
@@ -76,11 +80,14 @@ const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const FENCED_CODE_BLOCK_PATTERN = /```(?:json)?\s*([\s\S]*?)```/g;
 
 const reviewSeveritySchema = z.enum(['blocking', 'major', 'minor', 'nit']);
+const reviewCategorySchema = z.enum(['security', 'privacy', 'correctness', 'design', 'api', 'testing']);
 
 const reviewCommentSchema = z.object({
   filePath: z.string().min(1),
   line: z.number().int().positive(),
   severity: reviewSeveritySchema,
+  // Default to 'correctness' if the model omits or mislabels the category, so one bad tag never voids the review.
+  category: reviewCategorySchema.catch('correctness'),
   title: z.string().min(1),
   body: z.string().min(1)
 });
@@ -279,6 +286,9 @@ export function buildReviewPrompt(options: BuildReviewPromptOptions): string {
     'You are Saturn, a principal engineer performing a rigorous code review for the Microsoft Loop',
     '(office-bohemia) monorepo. Review the change holistically across these lenses: CORRECTNESS, DESIGN &',
     'MAINTAINABILITY, API DESIGN, SECURITY, and PRIVACY.',
+    'SECURITY and PRIVACY are the HIGHEST-PRIORITY lenses: treat every changed file as a potential security or',
+    'privacy regression and run a dedicated security pass and a dedicated privacy pass over it, even when the change',
+    'looks unrelated or benign. A real security or privacy issue must NEVER go unreported.',
     '',
     'You are running INSIDE the full office-bohemia repository at the current working directory with the full GitHub',
     'Copilot toolset. USE WHATEVER READ-ONLY TOOLS YOU NEED to gain complete context before judging the change:',
@@ -351,6 +361,7 @@ export function buildReviewPrompt(options: BuildReviewPromptOptions): string {
     '  linters/formatters already enforce. Every comment must be a material issue a careful human reviewer would',
     '  also raise across the lenses above; when unsure whether something matters, leave it out.',
     `- Hard cap: at most ${String(maxComments)} comments, each anchored to a specific changed line.`,
+    '- Tag every finding with the single best-fit "category": security, privacy, correctness, design, api, or testing.',
     '',
     truncationNote,
     'Unified diff of the changed files (the number before each "|" is the post-change file line - anchor comments to it):',
@@ -366,6 +377,7 @@ export function buildReviewPrompt(options: BuildReviewPromptOptions): string {
     '      "filePath": "/exact/repo-root-relative/path/from/the/list/above",',
     '      "line": 123,',
     '      "severity": "blocking | major | minor | nit",',
+    '      "category": "security | privacy | correctness | design | api | testing",',
     '      "title": "short headline",',
     '      "body": "the actionable explanation and the suggested fix"',
     '    }',
@@ -436,7 +448,12 @@ export function limitComments(comments: readonly ReviewComment[], maxComments: n
   }
 
   const severityRank: Record<ReviewSeverity, number> = { blocking: 0, major: 1, minor: 2, nit: 3 };
-  const ranked = [...comments].sort((left, right) => severityRank[left.severity] - severityRank[right.severity]);
+  // Within a severity, keep security/privacy findings ahead of others so the cap never silences them.
+  const categoryRank = (category: ReviewCategory): number => (category === 'security' || category === 'privacy' ? 0 : 1);
+  const ranked = [...comments].sort((left, right) => {
+    const bySeverity = severityRank[left.severity] - severityRank[right.severity];
+    return bySeverity !== 0 ? bySeverity : categoryRank(left.category) - categoryRank(right.category);
+  });
   return ranked.slice(0, maxComments);
 }
 
@@ -461,7 +478,7 @@ export function buildVerificationPrompt(pullRequest: PullRequestSummary, comment
   const numbered = comments
     .map(
       (comment, index) =>
-        `[${String(index)}] (${comment.severity}) ${comment.filePath}:${String(comment.line)}\n    ${comment.title}\n    ${comment.body}`
+        `[${String(index)}] (${comment.severity}/${comment.category}) ${comment.filePath}:${String(comment.line)}\n    ${comment.title}\n    ${comment.body}`
     )
     .join('\n\n');
 
@@ -480,6 +497,8 @@ export function buildVerificationPrompt(pullRequest: PullRequestSummary, comment
     'Drop anything wrong, speculative, a style/naming nit, low-value, or already enforced by linters. Better to drop a',
     'borderline comment than to',
     'post a weak one. Be conservative.',
+    'A correct, material SECURITY or PRIVACY finding is the highest priority - KEEP it unless it is actually wrong or',
+    'already addressed in the code.',
     'For a comment on pre-existing code this PR did NOT change, KEEP it ONLY if it (a) explains how a change in THIS PR',
     'breaks that existing code, or (b) is a high-severity correctness bug or a security/privacy issue in a touched file.',
     'Otherwise DROP it (low/medium-severity or style/design nits on unchanged code are out of scope).',

@@ -51,6 +51,18 @@ export interface ReviewOutcome {
   readonly iterationId?: number;
   readonly detail?: string;
   readonly postedComments?: readonly PostedComment[];
+  /** How long the review (model passes) took, in ms. */
+  readonly durationMs?: number;
+  /** The model that produced this review. */
+  readonly model?: string;
+  /** Files actually sent to the model vs. total changed (a gap means the diff was truncated). */
+  readonly filesReviewed?: number;
+  readonly filesChanged?: number;
+  /** True when the diff context sent to the model was truncated (partial review). */
+  readonly diffTruncated?: boolean;
+  /** Findings the first pass proposed vs. how many survived the verification gate. */
+  readonly candidatesProposed?: number;
+  readonly candidatesKept?: number;
 }
 
 /** Everything {@link reviewPullRequest} needs to review and (optionally) post on one pull request. */
@@ -261,6 +273,7 @@ export async function reviewPullRequest(
 ): Promise<ReviewOutcome> {
   const { repoRoot, logger } = deps;
   const pullRequestId = pullRequest.pullRequestId;
+  const startedAtMs = Date.now();
   let iterationId: number | undefined;
 
   try {
@@ -310,6 +323,12 @@ export async function reviewPullRequest(
       maxTotalBytes: deps.maxPromptBytes,
       maxFileLines: deps.maxFileLines
     });
+    const reviewMeta = {
+      model: deps.model,
+      filesReviewed: fileInputs.length,
+      filesChanged: changedFiles.length,
+      diffTruncated: diffPayload.truncated
+    };
     const prompt = buildReviewPrompt({
       pullRequest,
       diffPayload,
@@ -340,7 +359,9 @@ export async function reviewPullRequest(
           status: 'error',
           commentsPosted: 0,
           iterationId,
-          detail: `copilot exited with code ${String(processResult.status)}: ${processResult.stderr.slice(0, 300)}`
+          detail: `copilot exited with code ${String(processResult.status)}: ${processResult.stderr.slice(0, 300)}`,
+          ...reviewMeta,
+          durationMs: Date.now() - startedAtMs
         };
       }
 
@@ -360,7 +381,15 @@ export async function reviewPullRequest(
     }
 
     if (review === undefined) {
-      return { pullRequestId, status: 'error', commentsPosted: 0, iterationId, detail: parseFailureDetail };
+      return {
+        pullRequestId,
+        status: 'error',
+        commentsPosted: 0,
+        iterationId,
+        detail: parseFailureDetail,
+        ...reviewMeta,
+        durationMs: Date.now() - startedAtMs
+      };
     }
 
     const comments = limitComments(review.comments, deps.maxComments);
@@ -369,7 +398,16 @@ export async function reviewPullRequest(
       // No blocking findings: stay silent on the PR (no "all clear" comment). The no-findings outcome is
       // still recorded in the store, so this iteration is not re-reviewed and the dashboard reflects it.
       logger.info(`PR #${String(pullRequestId)}: no blocking findings - leaving no comment.`);
-      return { pullRequestId, status: 'no-findings', commentsPosted: 0, iterationId };
+      return {
+        pullRequestId,
+        status: 'no-findings',
+        commentsPosted: 0,
+        iterationId,
+        ...reviewMeta,
+        durationMs: Date.now() - startedAtMs,
+        candidatesProposed: comments.length,
+        candidatesKept: 0
+      };
     }
 
     // Verification gate: a second model pass re-checks the proposed comments and keeps only the
@@ -385,7 +423,11 @@ export async function reviewPullRequest(
         status: 'no-findings',
         commentsPosted: 0,
         iterationId,
-        detail: 'all proposed comments dropped by the verification gate'
+        detail: 'all proposed comments dropped by the verification gate',
+        ...reviewMeta,
+        durationMs: Date.now() - startedAtMs,
+        candidatesProposed: comments.length,
+        candidatesKept: 0
       };
     }
 
@@ -404,7 +446,11 @@ export async function reviewPullRequest(
         status: 'reviewed',
         commentsPosted: 0,
         iterationId,
-        detail: `${String(verifiedComments.length)} verified comment(s) not posted (dry-run)`
+        detail: `${String(verifiedComments.length)} verified comment(s) not posted (dry-run)`,
+        ...reviewMeta,
+        durationMs: Date.now() - startedAtMs,
+        candidatesProposed: comments.length,
+        candidatesKept: verifiedComments.length
       };
     }
 
@@ -502,9 +548,21 @@ export async function reviewPullRequest(
       status: 'reviewed',
       commentsPosted: commentsPosted + commentsReactivated,
       iterationId,
-      postedComments
+      postedComments,
+      ...reviewMeta,
+      durationMs: Date.now() - startedAtMs,
+      candidatesProposed: comments.length,
+      candidatesKept: verifiedComments.length
     };
   } catch (error) {
-    return { pullRequestId, status: 'error', commentsPosted: 0, iterationId, detail: describeError(error) };
+    return {
+      pullRequestId,
+      status: 'error',
+      commentsPosted: 0,
+      iterationId,
+      detail: describeError(error),
+      model: deps.model,
+      durationMs: Date.now() - startedAtMs
+    };
   }
 }

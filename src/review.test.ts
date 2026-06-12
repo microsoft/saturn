@@ -7,7 +7,7 @@ describe('parseReviewResult', () => {
       'Here is my review of the change.',
       '```json',
       '{"summary":"Looks mostly good","hasFindings":true,"comments":[' +
-        '{"filePath":"/apps/a.ts","line":12,"severity":"major","title":"Null deref","body":"Guard x before use."}]}',
+        '{"filePath":"/apps/a.ts","line":12,"severity":"major","category":"security","title":"Null deref","body":"Guard x before use."}]}',
       '```',
       'Done.'
     ].join('\n');
@@ -16,7 +16,7 @@ describe('parseReviewResult', () => {
       summary: 'Looks mostly good',
       hasFindings: true,
       comments: [
-        { filePath: '/apps/a.ts', line: 12, severity: 'major', title: 'Null deref', body: 'Guard x before use.' }
+        { filePath: '/apps/a.ts', line: 12, severity: 'major', category: 'security', title: 'Null deref', body: 'Guard x before use.' }
       ]
     });
   });
@@ -87,9 +87,9 @@ describe('buildDiffPayload', () => {
 describe('limitComments', () => {
   it('keeps the highest-severity comments when over the cap', () => {
     const comments: ReviewComment[] = [
-      { filePath: '/a', line: 1, severity: 'nit', title: 'n', body: 'b' },
-      { filePath: '/b', line: 2, severity: 'blocking', title: 'x', body: 'b' },
-      { filePath: '/c', line: 3, severity: 'minor', title: 'm', body: 'b' }
+      { filePath: '/a', line: 1, severity: 'nit', category: 'design', title: 'n', body: 'b' },
+      { filePath: '/b', line: 2, severity: 'blocking', category: 'security', title: 'x', body: 'b' },
+      { filePath: '/c', line: 3, severity: 'minor', category: 'correctness', title: 'm', body: 'b' }
     ];
 
     const limited = limitComments(comments, 2);
@@ -99,7 +99,7 @@ describe('limitComments', () => {
   });
 
   it('returns the input unchanged when within the cap', () => {
-    const comments: ReviewComment[] = [{ filePath: '/a', line: 1, severity: 'major', title: 't', body: 'b' }];
+    const comments: ReviewComment[] = [{ filePath: '/a', line: 1, severity: 'major', category: 'correctness', title: 't', body: 'b' }];
     expect(limitComments(comments, 10)).toBe(comments);
   });
 });
