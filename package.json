@@ -1,0 +1,48 @@
+{
+  "name": "saturn-agent",
+  "version": "1.0.0",
+  "description": "Saturn - an always-on, repo-agnostic autonomous engineering agent for Azure DevOps: continuous PR review, whole-codebase security & privacy audit, and automated bug-fixing (Code Autopilot), powered by the GitHub Copilot CLI.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "author": "Microsoft Corporation",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/microsoft/saturn.git"
+  },
+  "bugs": {
+    "url": "https://github.com/microsoft/saturn/issues"
+  },
+  "homepage": "https://github.com/microsoft/saturn#readme",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "jest",
+    "saturn": "tsx src/saturnDashboard.ts",
+    "dashboard": "tsx src/saturnDashboard.ts",
+    "review": "tsx src/start.ts",
+    "fix": "tsx src/fixStart.ts",
+    "deploy": "node scripts/deploySaturn.cjs",
+    "register-ado-hook": "node scripts/registerAdoServiceHook.cjs",
+    "install-autostart": "node scripts/installAutostart.cjs"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.6",
+    "zod": "^4.4.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@jest/globals": "^30.0.2",
+    "@swc/core": "^1.7.26",
+    "@swc/jest": "^0.2.37",
+    "@types/node": "^22.13.14",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.13.0",
+    "globals": "^15.11.0",
+    "jest": "^30.0.2",
+    "tsx": "^4.22.4",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.10.0"
+  }
+}
