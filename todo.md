@@ -4,18 +4,11 @@ Pending work and known follow-ups. (Completed items are removed; see git history
 
 ## Configuration & hosting
 
-- **Corpnet reachability / multi-user hosting.** Host the bundle behind Azure AD EasyAuth (App Service /
-  Container Apps) so corpnet users can view + give feedback while Start/Stop stays owner-only; persist
-  `~/.saturn/` across restarts. (A Cloud PC is typically not inbound-reachable, and reaching the dashboard
+- **Corporate-network reachability / multi-user hosting.** Host the bundle behind Azure AD EasyAuth (App Service /
+  Container Apps) so corporate-network users can view + give feedback while Start/Stop stays owner-only; persist
+  `~/.saturn/` across restarts. (A cloud-hosted dev VM is typically not inbound-reachable, and reaching the dashboard
   on the LAN needs the port opened in the host firewall.)
 
-## Release / maintenance
-
-- **Open-source release — finish in the OSPO portal.** `microsoft/saturn` now carries the MIT `LICENSE`,
-  `SECURITY.md`, `CODE_OF_CONDUCT.md`, `SUPPORT.md`, and README **Contributing / Security / Trademarks**
-  sections (`package.json` declares `license: MIT`). The remaining steps are human-only via
-  <https://repos.opensource.microsoft.com/orgs/microsoft/repos/saturn>: complete the OSS release business
-  review, flip the repo to **public**, and enable the **CLA bot**.
 
 ## Feedback & access (planned)
 

@@ -29,6 +29,9 @@ describe('config', () => {
     expect(disclaimer).toContain('alias@contoso.com');
     expect(disclaimer).toContain('Saturn');
     expect(disclaimer.toLowerCase()).toContain('not a sign-off');
+    // Generative-AI transparency: outputs must be flagged as AI-generated and fallible.
+    expect(disclaimer).toContain('AI-generated');
+    expect(disclaimer.toLowerCase()).toContain('incorrect');
   });
 
   it('wraps a comment with the disclaimer header and the hidden idempotency marker', () => {

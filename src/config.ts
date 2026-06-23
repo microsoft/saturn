@@ -411,8 +411,9 @@ export function isAllowedForReview(
 export function buildBotDisclaimer(onBehalfOf: string): string {
   return (
     `**Automated review by Saturn on behalf of ${onBehalfOf}.** ` +
-    'Saturn is an automated code reviewer (correctness, design, API, security, and privacy) - this is a ' +
-    'best-effort review, not a sign-off or approval. Please verify before merging.'
+    'Saturn is an AI agent (GitHub Copilot) that reviews code for correctness, design, API, security, and ' +
+    'privacy. These comments are AI-generated and may be incomplete or incorrect - this is a best-effort ' +
+    'review, not a sign-off or approval. Please verify before merging.'
   );
 }
 

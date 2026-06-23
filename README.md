@@ -11,7 +11,7 @@ An always-on, **repo-agnostic** autonomous engineering agent for **Azure DevOps*
 - **Reactive dashboard** — live updates via Server-Sent Events (no manual refresh) with paginated history.
 - **Leadership Dashboard tab** — the default tab is an all-visual, **interactive Chart.js** overview (live sweep-progress slider, KPI cards, severity/category/status doughnuts + bars for the audit, and review outcomes, a 14-day trend, throughput, and file hotspots for the reviewer); the detailed, filterable lists live on the other two tabs. Assembled from one `/api/dashboard` call; charts use a self-hosted Chart.js (the `chart.js` npm package, served from `/vendor/`, no external CDN) and fall back to inline SVG offline.
 - **Feedback loop** — every comment links to a feedback page that captures the signed-in user; feedback shows on the dashboard with a deep link back to the exact comment.
-- **Owner-only control** — anyone on corpnet can view the dashboard and submit feedback, but only the owner can Start/Stop (enforced server-side).
+- **Owner-only control** — anyone who can reach the dashboard (e.g., on your corporate network) can view it and submit feedback, but only the owner can Start/Stop (enforced server-side).
 
 ## Codebase audit agent
 
@@ -85,7 +85,15 @@ See [docs/get-started.md](docs/get-started.md) for the full list and examples.
 
 ## Deploy
 
-`npm run deploy` produces self-contained `saturnDashboard.cjs` / `saturn-cli.cjs` bundles (with `zod` inlined) plus a hidden launcher, fully independent of this source tree. For a multi-user, corpnet-hosted dashboard with real per-user identity, host it behind Azure AD (App Service / Container Apps EasyAuth) and set `SATURN_OWNER` + `SATURN_FEEDBACK_URL`. See [docs/architecture.md](docs/architecture.md).
+`npm run deploy` produces self-contained `saturnDashboard.cjs` / `saturn-cli.cjs` bundles (with `zod` inlined) plus a hidden launcher, fully independent of this source tree. For a multi-user, hosted dashboard with real per-user identity, host it behind Azure AD (App Service / Container Apps EasyAuth) and set `SATURN_OWNER` + `SATURN_FEEDBACK_URL`. See [docs/architecture.md](docs/architecture.md).
+
+## Responsible AI
+
+Saturn is an AI agent built on the GitHub Copilot CLI. Its review comments, audit findings, and code changes
+are **AI-generated and may be incomplete or incorrect** — they are best-effort assistance, not a sign-off, and
+a human reviews and merges every change. Saturn analyzes **code and engineering artifacts only**; it is **not**
+a people-analytics tool and must not be used to evaluate, score, or rank individuals. See
+[TRANSPARENCY.md](TRANSPARENCY.md) for intended uses, limitations, data handling, and responsible-use guidance.
 
 ## Contributing
 
