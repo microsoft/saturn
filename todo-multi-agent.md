@@ -1,0 +1,97 @@
+# Code Autopilot — Multi-Repo / Multi-Agent Extension (design & feasibility)
+
+> Status: **design / feasibility** — not yet implemented. Captures the plan to extend Code Autopilot from
+> single-repo autonomous bug-fixing to multi-repo coordination and cross-repo feature implementation.
+
+## Goals
+
+1. **Support multiple repositories.**
+2. **Coordinate across per-repo agents** — no central *execution* coordinator; agents agree on interface
+   contracts peer-to-peer.
+3. **Fix bugs that span repositories.**
+4. **Implement features that span repositories** from a complete design document, mostly autonomously.
+
+## Feasibility, quality & requirements
+
+| # | Capability | Buildable | Quality | Requirements |
+|---|---|---|---|---|
+| 1 | Multiple repos | Yes | **High** (= today) | Per-repo config + clone management; run loop/scope/PR-cap per repo; multi-repo audit store + dashboard view |
+| 3a | Bug fixes — independent | Yes | **High** (= today) | #1; the existing per-repo fix primitive |
+| 2 | Cross-repo coordination | Yes | **High** (peer-negotiation raises it) | Contract artifact; peer-negotiation protocol; convergence cap → human escalation; "agreed" = buildable stub/contract test; transcript logging |
+| 3b | Bug fixes — coupled | Yes | **Good → High** | #2; coupling/dependency detection; backward-compatible / versioned change discipline |
+| 4 | Features — autonomous | Yes | **High** (brushing Max) | Complete e2e design doc + mind map; ask-the-human clarification channel; contract (#2); contract + integration tests as oracle; scope/drift guard; autonomous-with-escalation + human merge gate |
+
+## The unlock: contract-first, peer-negotiated
+
+The hard part of cross-repo work is not the per-repo edit (Code Autopilot already does that well) — it is
+coordination. **Contract-first development dissolves most of it:** the moment the agents agree on the
+**interface contract** (API schema / typed interface / event shape), that artifact becomes the decoupling
+mechanism:
+
+- coordination collapses to a single up-front handshake — no continuous agent-to-agent chatter during
+  implementation;
+- the contract *is* the shared cross-repo context (no agent has to watch another);
+- the contract generates an **independent test oracle per side** (consumer-driven contract tests), so each
+  side is verifiable without standing both systems up together;
+- backward-compatible / versioned evolution (expand-then-contract) makes deploy/merge order a non-issue.
+
+**Contracts are negotiated by the agents that are experts in their own repo.** One proposes a contract; it
+goes to the other; they evaluate, counter, and iterate; they converge on a mutually-buildable agreement.
+Because each proposal is grounded in what its repo can actually do, the negotiated contract reflects both
+sides' real constraints — which *raises* quality versus a single agent authoring both sides.
+
+## Architecture — a 3-phase pipeline (not a decentralized free-for-all)
+
+1. **Negotiate the contract** — peer-to-peer between the repo-expert agents → a versioned contract artifact.
+2. **Implement in parallel** — each repo's existing primitive (clone → Copilot CLI edit → PR), grounded in
+   the contract + its own repo. Independent; no inter-agent runtime messaging.
+3. **Verify** — each side runs contract tests generated from the artifact; PRs open; **human merge gate**.
+
+This reuses today's per-repo fix primitive unchanged. The only new components are: **multi-repo config**, the
+**contract artifact + negotiation protocol**, and **contract-test generation**. The peer-to-peer interaction
+is confined to the bounded, terminating, auditable *contract* phase; execution stays independent.
+
+## Peer-negotiation protocol — design points
+
+- **Flow:** propose → evaluate → counter → … → agree, between agents each grounded in their own repo.
+- **Convergence control:** cap the number of rounds; if no agreement, **escalate to a human** with the
+  sticking points. (This is the one genuinely new risk — two agents could loop or oscillate.)
+- **"Agreed" must mean buildable, not verbal:** a contract is final only when **each side can produce a
+  passing stub / contract test** against it. This prevents an over-optimistic agent agreeing to something it
+  cannot implement.
+- **Escalate genuine conflict:** if the two repos' needs truly cannot both be satisfied, surface it with
+  options — catching a real design conflict on day one is a feature, not a failure.
+- **Log the transcript:** proposals, counters, rationale, and the final contract — for human trust,
+  debugging, and governance.
+
+## Quality model
+
+Quality is governed by the strength of the **verification oracle** (tests / contract tests) plus grounding
+and the human merge gate.
+
+- **#1, #3a, #2** inherit today's proven per-repo quality (**High, human-reviewed**); #2's quality is *raised*
+  by peer-negotiation because the contract is grounded in both repos.
+- **#4** has two gaps to close:
+  - the **intent gap** ("do we know what to build?") — closed by a complete **design doc + mind map** plus an
+    **ask-the-human clarification channel** (the agent asks rather than guesses on ambiguity);
+  - the **verification gap** ("is the code actually correct?") — closed by **contract + integration tests**.
+  With both closed, #4 reaches **High, approaching Max.**
+- **Irreducible residual:** an agent can be *confidently wrong* — the clarification channel only triggers on
+  uncertainty the agent *recognizes*, so tests plus a thin human/test gate cover the last mile. True **Max**
+  (zero-residual, no human) is not a realistic guarantee for open-ended features; **High with a safety gate**
+  is.
+
+## Suggested phasing
+
+1. Multi-repo support (#1).
+2. Independent cross-repo bug-fixing (#3a).
+3. Contract + peer-negotiation coordination (#2).
+4. Coupled cross-repo bug-fixing (#3b).
+5. Cross-repo feature implementation (#4) — autonomous-with-escalation.
+
+## Constraints / realities (not engineering blockers)
+
+- **LLM cost & rate-limits scale with N repos** — already a constraint at one repo.
+- **Higher autonomy + multi-agent increases blast radius** — revisit the responsible-AI / governance posture
+  (per your org's process) before enabling autonomous cross-repo features.
+- **Preserve the no-auto-merge / human-merge gate** as the quality backstop.
