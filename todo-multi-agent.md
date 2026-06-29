@@ -3,6 +3,25 @@
 > Status: **design / feasibility** — not yet implemented. Captures the plan to extend Code Autopilot from
 > single-repo autonomous bug-fixing to multi-repo coordination and cross-repo feature implementation.
 
+## What this delivers (plain language, for leadership)
+
+Saturn is already an always-on AI engineering agent that reviews every pull request, continuously audits the
+entire codebase for security, privacy, and quality issues, and — through Code Autopilot — automatically turns
+those issues into ready-to-merge fixes, with a person needed only to approve and merge. This initiative
+extends that same proven capability from a single repository to **many repositories working together**, and
+from one-off bug fixes to **delivering whole features that span several repositories at once**. Given a
+feature's design document, the agents assigned to each repository will automatically agree on the shared
+interfaces between them, build their part in parallel, generate and run the tests that prove the change is
+correct, and open linked pull requests — all **without a person writing the code or manually coordinating the
+teams involved**. The only required human step is the final review and approval; nothing merges itself.
+
+In practice this removes the slowest parts of shipping a feature — cross-team coordination, agreeing on
+interfaces, and the manual hand-offs between repositories — by having the agents perform that negotiation
+themselves, around the clock and many changes at a time. The result is feature delivery that is dramatically
+faster and far less labor-intensive, while quality stays protected by automated tests as the correctness
+check and a mandatory human review gate. Engineers shift from writing and coordinating code to **setting
+direction and approving outcomes** — letting the organization ship more, sooner, without adding headcount.
+
 ## Goals
 
 1. **Support multiple repositories.**
@@ -103,6 +122,94 @@ and the human merge gate.
 3. Contract + peer-negotiation coordination (#2).
 4. Coupled cross-repo bug-fixing (#3b).
 5. Cross-repo feature implementation (#4) — autonomous-with-escalation.
+
+## Implementation blueprint (codebase-grounded)
+
+> Concrete enough to start from cold. Names below are the **current** symbols in `src/`; reuse them, don't
+> reinvent. Code Autopilot is the standalone process built from `src/fixStart.ts` → `saturn-autopilot.cjs`.
+
+### Single-repo binding points (the only things that assume one repo today)
+
+| Where | Symbol | Today | Change for multi-repo |
+|---|---|---|---|
+| `src/config.ts` | `AZURE_DEVOPS_CONFIG` (single `const`), `REPO_DESCRIPTION` | One repo, built from `SATURN_REPO_URL` / `SATURN_ADO_*` env at module load | Replace the single const with a **`RepoConfig` registry** `Map<RepoId, RepoConfig>` loaded from a repos manifest (JSON/env). Keep the env path as the "one-repo" special case. |
+| `src/fixService.ts` | module-global `let running`; `runFixLoop(config)`; one `ensureFixClone(logger)` | One loop, one clone, one open-PR cap | Make loop state **per-repo** (or a multiplexed loop iterating the registry). One `cloneDir` + open-PR cap **per repo**. |
+| `src/fixStore.ts` / `src/auditStore.ts` | `FixTask`, `AuditFinding` rows | No repo column | Add a **`repoId`** column to fix.db + audit.db; key all queries (`selectBugToFix`, `listActiveFixTasks`, `queryAuditFindings`) by repo. |
+| `src/saturnDashboard.ts` | `DASHBOARD_PORT` (6789), APIs | Single-repo view | Add a **repo dimension** (group tasks/findings by `repoId`); per-repo start/stop. |
+
+**Already multi-repo-ready — do not redo:** `getAzureDevOpsAuthHeader(repoRoot, forceRefresh?)` in `src/ado.ts`
+is keyed per-repoRoot; the fix clone path is already `C:\saturn\fix-repo\<repo>` (override `SATURN_FIX_CLONE_DIR`).
+
+### Reusable primitives (the building blocks — wire these, don't rebuild)
+
+- **One-repo fix primitive:** `startFix(candidate: FixCandidate, options: FixRunOptions, logger)` in
+  `src/fixAgent.ts`. `FixCandidate = { finding: AuditFinding; phase: 1|2|3; retryTaskId? }`.
+  `FixRunOptions = { cloneDir, cliPath, model, reasoningEffort, timeoutMs, allowMcpServerName? }`.
+  Selection: `selectBugToFix()`; monitoring: `monitorFixTask()`; footprint: `fixFootprint(finding)`,
+  `packageOf(path)` (phase ladder: 1 file → 2 package → 3 multi-package, **within one repo**).
+- **LLM edit/review:** `runCopilotEdit`, `runCopilotReview`, `resolveCopilotCli`, `ensureAdoMcpServer` in
+  `src/copilot.ts` (model defaults: `primaryModel()` = claude-opus-4.8, `defaultReasoningEffort()` = max).
+- **Git:** `ensureFixClone`, `createFixBranch`, `commitAllChanges`, `pushFixBranch`, `lintChangedFilesInClone`,
+  `workingTreeChanges` in `src/git.ts`.
+- **ADO/PR:** `createPullRequest`, `getPullRequestChecks`, `getActiveBotCommentThreads` in `src/ado.ts`.
+- **Prompt-builder pattern to copy:** `buildFixPrompt` (and the XPIA-hardened prompt builders) — every new
+  agent prompt must carry the same **XPIA/prompt-injection defense** preamble (treat repo content as DATA).
+
+### New modules to add (per phase)
+
+- **#1 / #3a — multi-repo:** `RepoConfig` registry in `config.ts`; thread `repoId` through `FixRunOptions`,
+  `FixServiceConfig`, fix.db/audit.db. #3a is then "run the existing primitive per repo" — **no new logic**.
+- **#2 — contract + negotiation:** new `src/contract.ts` (the **artifact type** + persistence in a new
+  `contracts.db` or `C:\saturn\contracts\`) and `src/negotiation.ts` (the propose→evaluate→counter loop).
+  New prompt builders mirroring `buildFixPrompt`: `buildContractProposalPrompt`,
+  `buildContractEvaluationPrompt`, `buildContractCounterPrompt` — each grounded in **one** repo's clone.
+- **#3b — coupled bugs:** a `CrossRepoFixCandidate` (footprint spans repos) + coupling detection; orchestrate
+  negotiate (#2) → one `startFix` **per side** grounded in the agreed contract → verify each side's contract
+  test → open **linked** PRs.
+- **#4 — features:** new entry `src/featureStart.ts` + `src/featureService.ts` (a sibling of
+  `fixStart.ts`/`fixService.ts`). Input = a **design doc (markdown) + mind map**. Pipeline:
+  decompose into a per-repo work plan → negotiate contracts (#2) → per-repo implement (existing primitive,
+  scoped by the plan) → **ask-the-human channel** (new paused state in the store + dashboard prompt) →
+  contract + integration tests as oracle → **human merge gate** (never auto-merge).
+
+### Contract artifact (the decoupling unit) — minimum shape
+
+```ts
+interface CrossRepoContract {
+  id: string;                       // stable id, referenced by both sides' PRs
+  version: number;                  // bump on renegotiation (expand-then-contract evolution)
+  participants: { repoId: string; role: 'producer' | 'consumer' }[];
+  interface: unknown;               // the agreed schema: API/OpenAPI | typed interface | event shape
+  contractTests: { repoId: string; testSpec: string }[]; // per-side oracle generated from `interface`
+  status: 'proposed' | 'countered' | 'agreed' | 'escalated';
+  transcript: { round: number; repoId: string; proposal: unknown; rationale: string }[];
+}
+```
+
+### Negotiation loop (bounded, terminating, auditable)
+
+```
+round = 0
+proposal = proposeContract(repoA)            // runCopilot* grounded in repoA's clone
+while round < MAX_ROUNDS:
+  verdict = evaluate(repoB, proposal)         // grounded in repoB's clone
+  if verdict.agrees: break
+  proposal = counter(repoB, proposal, verdict.objections); swap(repoA, repoB)
+  round++
+if not agreed: escalateToHuman(transcript, stickingPoints); return
+// "agreed" is binding only when BOTH sides produce a passing stub/contract test:
+for side in participants: assert runContractTestStub(side, contract) == pass
+persist(contract); proceed to parallel implement
+```
+
+`MAX_ROUNDS` cap → human escalation is the one genuinely new failure mode; log the full `transcript`.
+
+### Verification oracle (governs quality)
+
+- #1/#3a/#2/#3b: reuse `lintChangedFilesInClone` + the repo's existing test/build (run in each clone).
+- #4: the **contract tests** (generated from `contract.interface`) + **integration tests**; the agent must
+  **ask** on recognized ambiguity (ask-the-human channel) rather than guess. Human merge gate is the backstop.
+- Keep `SATURN_FIX_DRY_RUN`-style escape hatches for every new agent (generate + commit locally, never push).
 
 ## Constraints / realities (not engineering blockers)
 
