@@ -21,6 +21,21 @@
 | 3b | Bug fixes — coupled | Yes | **Good → High** | #2; coupling/dependency detection; backward-compatible / versioned change discipline |
 | 4 | Features — autonomous | Yes | **High** (brushing Max) | Complete e2e design doc + mind map; ask-the-human clarification channel; contract (#2); contract + integration tests as oracle; scope/drift guard; autonomous-with-escalation + human merge gate |
 
+## How the capabilities relate
+
+**#2 (cross-repo coordination via negotiated contracts) is the shared foundation, not a standalone feature.**
+Both of the cross-repo capabilities are applications of it:
+
+- **#3b — coupled bug fixes** is #2 applied to a *bounded* change: a cross-repo bug is essentially a small,
+  well-specified cross-repo feature, so it uses the same **negotiate → implement → verify** machinery.
+- **#4 — features across repos** is *inherently* cross-repo and therefore **already includes #2**:
+  implementing a feature that spans repos requires the contract negotiation + coordination by definition.
+  So **#4 subsumes #2**; #2 is simply the reusable layer that #4 (and #3b) are built on.
+
+In short: build the contract-first coordination layer (#2) **once**, and both coupled bug-fixing (#3b) and
+cross-repo features (#4) fall out of it — they differ only in **scope** (bounded bug vs. open-ended feature)
+and in the **strength of the test oracle** required. #4 and #3b are the same pipeline at different scales.
+
 ## The unlock: contract-first, peer-negotiated
 
 The hard part of cross-repo work is not the per-repo edit (Code Autopilot already does that well) — it is
