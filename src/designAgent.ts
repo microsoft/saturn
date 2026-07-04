@@ -105,15 +105,14 @@ function audienceGuidance(conversation: Conversation): string {
     if (conversation.audience === 'technical') {
         return 'AUDIENCE: TECHNICAL. Provide full engineering detail in the design document.';
     }
-    if (conversation.mode === 'spec') {
-        return [
-            'AUDIENCE: UNKNOWN and this conversation started from a SPEC (the requester may be a PM / non-developer).',
-            'If you have not already asked, your FIRST job is to ask whether they want full technical detail or a',
-            'plain-language summary (feasibility, options, and time-to-production). Set "askAudience": true and put the',
-            'question in "reply", and do NOT produce a heavy technical design document until they answer.'
-        ].join(' ');
-    }
-    return 'AUDIENCE: assume TECHNICAL (a developer) unless the conversation suggests otherwise.';
+    return [
+        'AUDIENCE: UNKNOWN - infer it from HOW the user writes and what they ask for. If they read like a PM or a',
+        'non-developer, or the request is high-level / business-oriented, ASK ONE brief clarifying question about',
+        'whether they want full technical detail or a plain-language summary (feasibility, options, and',
+        'time-to-production): set "askAudience": true, put the question in "reply", and hold off on a heavy',
+        'technical design document until they answer. If they are clearly technical, proceed with full detail.',
+        'In general, ASK a short clarifying question whenever the requirements are ambiguous instead of guessing.'
+    ].join(' ');
 }
 
 function buildDesignPrompt(input: DesignTurnInput): string {

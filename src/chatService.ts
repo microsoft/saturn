@@ -153,8 +153,8 @@ export async function handleChatTurn(
     const priorHistory = listMessages(conversationId);
     addMessage({ conversationId, role: 'user', content: userMessage });
 
-    // Spec path: resolve the audience from the user's answer once the agent has already asked.
-    if (conversation.mode === 'spec' && conversation.audience === undefined && priorHistory.some((m) => m.role === 'assistant')) {
+    // Resolve the audience from the user's answer once the agent has already asked (intent-based, any chat).
+    if (conversation.audience === undefined && priorHistory.some((m) => m.role === 'assistant')) {
         const audience = inferAudience(userMessage);
         if (audience !== undefined) {
             conversation = updateConversation(conversationId, { audience }) ?? conversation;

@@ -497,39 +497,62 @@ const DASHBOARD_HTML = `<!doctype html>
   .ao-table .f-input { width:100%; box-sizing:border-box; }
   .ao-del { color:var(--muted); cursor:pointer; background:none; border:0; font-size:16px; line-height:1; padding:4px 6px; }
   .ao-del:hover { color:var(--err); }
-  .chat-layout { display:grid; grid-template-columns: 230px 1fr 40%; gap:12px; height: calc(100vh - 210px); min-height:440px; }
-  .chat-side { display:flex; flex-direction:column; border:1px solid var(--line,#232a44); border-radius:8px; padding:10px; overflow:hidden; }
-  .chat-conv-list { margin-top:10px; overflow:auto; flex:1; }
-  .chat-conv { padding:8px 10px; border-radius:6px; cursor:pointer; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .chat-conv:hover { background:rgba(127,127,127,.12); }
-  .chat-conv.active { background:rgba(41,82,227,.18); }
-  .chat-main { display:flex; flex-direction:column; border:1px solid var(--line,#232a44); border-radius:8px; overflow:hidden; }
-  .chat-thread { flex:1; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .chat-shell { display:flex; height: calc(100vh - 196px); min-height:480px; border:1px solid var(--line,#232a44); border-radius:12px; overflow:hidden; }
+  .chat-sidebar { flex:0 0 auto; display:flex; flex-direction:column; padding:12px; border-right:1px solid var(--line,#232a44); overflow:hidden; box-sizing:border-box; }
+  .chat-newbtn { width:100%; }
+  .chat-conv-list { margin-top:12px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:2px; }
+  .chat-conv { display:flex; align-items:center; gap:6px; padding:9px 10px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .chat-conv:hover { background:rgba(127,127,127,.10); }
+  .chat-conv.active { background:rgba(41,82,227,.16); }
+  .chat-conv .title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-conv .del { border:0; background:none; color:var(--muted,#8b93b5); cursor:pointer; font-size:16px; line-height:1; padding:0 4px; opacity:0; border-radius:4px; }
+  .chat-conv:hover .del { opacity:.75; } .chat-conv .del:hover { opacity:1; color:var(--err,#ff7a8a); }
+  .chat-col { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+  .chat-head { padding:12px 18px; border-bottom:1px solid var(--line,#232a44); font-weight:600; font-size:15px; }
+  .chat-thread { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+  .chat-welcome { margin:auto; text-align:center; max-width:440px; color:var(--muted,#8b93b5); }
+  .chat-welcome h3 { margin:0 0 8px; color:inherit; font-size:18px; }
+  .chat-welcome p { margin:0; font-size:14px; line-height:1.6; }
   .chat-msg { display:flex; }
   .chat-msg.user { justify-content:flex-end; }
-  .chat-bubble { max-width:82%; padding:9px 13px; border-radius:12px; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; font-size:14px; line-height:1.5; }
-  .chat-msg.user .chat-bubble { background:#2952e3; color:#fff; border-bottom-right-radius:3px; }
-  .chat-msg.assistant .chat-bubble { background:rgba(127,127,127,.16); border-bottom-left-radius:3px; }
-  .chat-composer { display:flex; gap:8px; padding:10px; border-top:1px solid var(--line,#232a44); }
-  .chat-input { flex:1; resize:vertical; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:8px; padding:8px; font:inherit; box-sizing:border-box; }
-  .chat-doc-pane { display:flex; flex-direction:column; border:1px solid var(--line,#232a44); border-radius:8px; overflow:hidden; }
-  .chat-doc-toolbar { display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border-bottom:1px solid var(--line,#232a44); font-size:12px; text-transform:uppercase; letter-spacing:1px; color:var(--muted,#8b93b5); }
-  .chat-doc { flex:1; overflow:auto; padding:14px; }
-  .chat-doc-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .chat-doc-title { font-size:16px; font-weight:600; }
-  .chat-doc-actions { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0; }
-  .chat-doc-build { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:8px 0; padding:8px; border:1px dashed var(--line,#232a44); border-radius:8px; }
-  .chat-doc-body { margin-top:10px; font-size:14px; line-height:1.6; }
-  .chat-doc-body pre.mermaid { background:#fff; border:1px solid var(--line,#232a44); border-radius:8px; padding:10px; text-align:center; }
-  .chat-doc-body pre.code { background:#0d1430; color:#e6e9f0; padding:10px; border-radius:8px; overflow:auto; }
-  .chat-doc-body table { border-collapse:collapse; width:100%; } .chat-doc-body th,.chat-doc-body td { border:1px solid var(--line,#232a44); padding:6px 8px; font-size:13px; text-align:left; }
+  .chat-bubble { max-width:80%; padding:11px 15px; border-radius:16px; white-space:pre-wrap; word-wrap:break-word; overflow-wrap:anywhere; font-size:14.5px; line-height:1.55; }
+  .chat-msg.user .chat-bubble { background:linear-gradient(135deg,#3168ff,#2545d6); color:#fff; border-bottom-right-radius:5px; }
+  .chat-msg.assistant .chat-bubble { background:rgba(127,127,127,.14); border-bottom-left-radius:5px; }
+  .chat-typing { display:flex; align-items:center; gap:10px; color:var(--muted,#8b93b5); }
+  .dots { display:inline-flex; gap:4px; } .dots span { width:7px; height:7px; border-radius:50%; background:currentColor; opacity:.5; animation:cdot 1.2s infinite ease-in-out; }
+  .dots span:nth-child(2){ animation-delay:.18s; } .dots span:nth-child(3){ animation-delay:.36s; }
+  @keyframes cdot { 0%,60%,100%{ transform:translateY(0); opacity:.35; } 30%{ transform:translateY(-4px); opacity:1; } }
+  .caret { display:inline-block; width:8px; height:15px; margin-left:2px; background:currentColor; vertical-align:text-bottom; animation:cblink 1s steps(2) infinite; opacity:.7; }
+  @keyframes cblink { 0%,100%{opacity:0;} 50%{opacity:.8;} }
+  .chat-docbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line,#232a44); background:rgba(41,82,227,.06); }
+  .chat-composer { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line,#232a44); align-items:flex-end; }
+  .chat-input { flex:1; resize:none; max-height:160px; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
+  .chat-input:focus { outline:none; border-color:#3168ff; }
+  .chat-splitter { flex:0 0 6px; cursor:col-resize; background:transparent; transition:background .15s; }
+  .chat-splitter:hover { background:rgba(41,82,227,.35); }
+  .chat-doc { flex:0 0 auto; display:flex; flex-direction:column; border-left:1px solid var(--line,#232a44); overflow:hidden; box-sizing:border-box; }
+  .chat-doc-top { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line,#232a44); }
+  .chat-doc-title2 { font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chat-x { border:0; background:none; color:var(--muted,#8b93b5); cursor:pointer; font-size:20px; line-height:1; padding:0 4px; }
+  .chat-x:hover { color:inherit; }
+  .chat-doc-actions2 { display:flex; gap:6px; flex-wrap:wrap; padding:8px 14px; border-bottom:1px solid var(--line,#232a44); }
+  .chat-doc-build2 { display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:10px 14px; border-bottom:1px solid var(--line,#232a44); }
+  .chat-doc-scroll { flex:1; overflow-y:auto; padding:16px; }
+  .cbody { font-size:14px; line-height:1.65; } .cbody h1 { font-size:20px; } .cbody h2 { font-size:17px; } .cbody h1,.cbody h2,.cbody h3 { line-height:1.25; }
+  .cbody pre.mermaid { background:#fff; border:1px solid var(--line,#232a44); border-radius:8px; padding:12px; text-align:center; overflow:auto; }
+  .cbody pre.code { background:#0d1430; color:#e6e9f0; padding:12px; border-radius:8px; overflow:auto; }
+  .cbody code { background:rgba(127,127,127,.16); padding:1px 5px; border-radius:4px; }
+  .cbody table { border-collapse:collapse; width:100%; margin:10px 0; } .cbody th,.cbody td { border:1px solid var(--line,#232a44); padding:6px 9px; font-size:13px; text-align:left; }
+  .cbody blockquote { border-left:3px solid var(--line,#232a44); margin:8px 0; padding:4px 12px; color:var(--muted,#8b93b5); }
   .chat-empty { color:var(--muted,#8b93b5); font-size:13px; padding:10px; }
-  .feas { font-size:11px; padding:2px 8px; border-radius:10px; text-transform:uppercase; letter-spacing:.5px; }
+  .feas { font-size:11px; padding:2px 8px; border-radius:10px; text-transform:uppercase; letter-spacing:.5px; white-space:nowrap; }
   .feas.possible { background:rgba(94,224,138,.2); color:#3fae63; } .feas.conditional { background:rgba(240,190,80,.22); color:#c69a24; } .feas.not-possible { background:rgba(255,122,138,.2); color:#e0596b; }
   .fx-table { border-collapse:collapse; width:100%; } .fx-table th,.fx-table td { border:1px solid var(--line,#232a44); padding:6px 8px; font-size:13px; text-align:left; }
 </style>
 <script src="/vendor/chart.umd.min.js"></script>
 <script src="/vendor/mermaid.min.js"></script>
+<script src="/vendor/react.min.js"></script>
+<script src="/vendor/react-dom.min.js"></script>
 </head>
 <body>
 <header>
@@ -552,24 +575,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <button id="tabBtnChat" class="tab-btn" type="button" role="tab">Chat</button>
   </div>
   <div id="tab-chat" style="display:none">
-    <div class="chat-layout">
-      <aside class="chat-side">
-        <button id="chatNewBtn" class="btn" type="button" style="width:100%">+ New chat</button>
-        <button id="chatNewSpecBtn" class="btn ghost sm" type="button" style="width:100%;margin-top:6px">+ New from spec (PM)</button>
-        <div id="chatConvList" class="chat-conv-list"></div>
-      </aside>
-      <section class="chat-main">
-        <div id="chatThread" class="chat-thread"><div class="chat-empty">Ask Saturn to design or build something. It researches the whole codebase, checks feasibility, presents options, and can open a pull request.</div></div>
-        <div class="chat-composer">
-          <textarea id="chatInput" class="chat-input" rows="2" placeholder="Describe what you want to design or build..."></textarea>
-          <button id="chatSend" class="btn" type="button">Send</button>
-        </div>
-      </section>
-      <aside class="chat-doc-pane">
-        <div class="chat-doc-toolbar"><span>Design document</span><button id="chatTranscriptBtn" class="btn sm ghost" type="button" style="display:none">Download transcript</button></div>
-        <div id="chatDoc" class="chat-doc"><div class="chat-empty">The design document will appear here once the agent drafts one.</div></div>
-      </aside>
-    </div>
+    <div id="chat-root"></div>
   </div>
   <div id="tab-dash">
     <div class="dash-head"><h2>Codebase audit</h2><span class="dash-sub">Security, privacy &amp; reliability findings across the whole codebase</span></div>
@@ -2031,7 +2037,7 @@ const DASHBOARD_HTML = `<!doctype html>
       loadDocs();
     }
     if (which === 'chat') {
-      loadConversations();
+      mountChat();
     }
   }
   document.getElementById('tabBtnDash').onclick = function () { showTab('dash'); };
@@ -2338,6 +2344,249 @@ const DASHBOARD_HTML = `<!doctype html>
     if (ci) { ci.onkeydown = function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }; }
   })();
 
+  // ---- React-based Chat tab: streaming, resizable panels, on-demand design-doc view ----
+  var __chatMermaidReady = false;
+  function chatEnsureMermaid() {
+    if (__chatMermaidReady || !window.mermaid) { return; }
+    try {
+      var isLight = document.documentElement.getAttribute('data-theme') === 'light' || document.body.classList.contains('light');
+      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: isLight ? 'default' : 'dark' });
+      __chatMermaidReady = true;
+    } catch (e) {}
+  }
+
+  function currentTitle(convos, id) {
+    if (!id) { return 'New conversation'; }
+    for (var i = 0; i < convos.length; i++) { if (convos[i].id === id) { return convos[i].title || 'New chat'; } }
+    return 'Conversation';
+  }
+
+  function ChatApp() {
+    var React = window.React;
+    var h = React.createElement;
+    var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef, useCallback = React.useCallback;
+
+    var s1 = useState([]); var convos = s1[0], setConvos = s1[1];
+    var s2 = useState(null); var currentId = s2[0], setCurrentId = s2[1];
+    var s3 = useState([]); var messages = s3[0], setMessages = s3[1];
+    var s4 = useState(null); var artifact = s4[0], setArtifact = s4[1];
+    var s5 = useState(false); var docOpen = s5[0], setDocOpen = s5[1];
+    var s6 = useState(false); var streaming = s6[0], setStreaming = s6[1];
+    var s7 = useState(''); var statusText = s7[0], setStatusText = s7[1];
+    var s8 = useState(''); var streamReply = s8[0], setStreamReply = s8[1];
+    var s9 = useState(260); var leftW = s9[0], setLeftW = s9[1];
+    var s10 = useState(500); var rightW = s10[0], setRightW = s10[1];
+    var s11 = useState(''); var docHtml = s11[0], setDocHtml = s11[1];
+    var s12 = useState(''); var draft = s12[0], setDraft = s12[1];
+
+    var threadRef = useRef(null);
+    var docBodyRef = useRef(null);
+    var streamingRef = useRef(false);
+    var srRef = useRef('');
+
+    var loadConvos = useCallback(function () {
+      fetch('/api/chat/conversations').then(function (r) { return r.json(); }).then(function (d) { setConvos((d && d.conversations) || []); }).catch(function () {});
+    }, []);
+    var refreshConversation = useCallback(function (id) {
+      fetch('/api/chat/conversation?id=' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (d) {
+        setMessages(((d && d.messages) || []).filter(function (m) { return m.role !== 'system'; }));
+        if (d && d.artifact) { setArtifact(d.artifact); }
+      }).catch(function () {});
+    }, []);
+
+    useEffect(function () { loadConvos(); }, [loadConvos]);
+    useEffect(function () {
+      if (!currentId) { setMessages([]); setArtifact(null); setDocOpen(false); return; }
+      fetch('/api/chat/conversation?id=' + encodeURIComponent(currentId)).then(function (r) { return r.json(); }).then(function (d) {
+        setMessages(((d && d.messages) || []).filter(function (m) { return m.role !== 'system'; }));
+        setArtifact((d && d.artifact) || null);
+      }).catch(function () {});
+    }, [currentId]);
+    useEffect(function () { var el = threadRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [messages, streamReply, statusText, streaming]);
+    useEffect(function () {
+      if (!docOpen || !artifact) { setDocHtml(''); return; }
+      fetch('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + '&format=fragment').then(function (r) { return r.text(); }).then(function (html) { setDocHtml(html); }).catch(function () { setDocHtml('<div class="chat-empty">Could not render the document.</div>'); });
+    }, [docOpen, artifact]);
+    useEffect(function () {
+      var el = docBodyRef.current;
+      if (!el || !docHtml || !window.mermaid) { return; }
+      chatEnsureMermaid();
+      var blocks = Array.prototype.slice.call(el.querySelectorAll('pre.mermaid'));
+      if (blocks.length) { try { window.mermaid.run({ nodes: blocks, suppressErrors: true }); } catch (e) {} }
+    }, [docHtml]);
+    // While a build is running, poll so the PR link + status appear without a manual refresh.
+    useEffect(function () {
+      if (!currentId || !artifact || (artifact.status !== 'building' && artifact.status !== 'approved')) { return; }
+      var t = setInterval(function () { refreshConversation(currentId); }, 6000);
+      return function () { clearInterval(t); };
+    }, [currentId, artifact, refreshConversation]);
+
+    var doStream = useCallback(function (convId, text) {
+      setStreaming(true); streamingRef.current = true; setStatusText('Sending'); setStreamReply(''); srRef.current = '';
+      var NL = String.fromCharCode(10);
+      fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: convId, message: text }) }).then(function (resp) {
+        if (!resp.body) { throw new Error('no stream'); }
+        var reader = resp.body.getReader();
+        var dec = new TextDecoder();
+        var buf = '';
+        function finish() {
+          streamingRef.current = false; setStreaming(false); setStatusText('');
+          var finalReply = srRef.current;
+          if (finalReply) { setMessages(function (p) { return p.concat([{ role: 'assistant', content: finalReply }]); }); }
+          setStreamReply(''); srRef.current = '';
+          refreshConversation(convId); loadConvos();
+        }
+        function pump() {
+          return reader.read().then(function (res) {
+            if (res.done) { finish(); return; }
+            buf += dec.decode(res.value, { stream: true });
+            var frames = buf.split(NL + NL);
+            buf = frames.pop();
+            frames.forEach(function (frame) {
+              var ev = 'message', dataStr = '';
+              frame.split(NL).forEach(function (line) {
+                if (line.indexOf('event:') === 0) { ev = line.slice(6).trim(); }
+                else if (line.indexOf('data:') === 0) { dataStr += line.slice(5).trim(); }
+              });
+              if (!dataStr) { return; }
+              var data; try { data = JSON.parse(dataStr); } catch (e) { return; }
+              if (ev === 'status') { setStatusText(data.text || ''); }
+              else if (ev === 'delta') { setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
+              else if (ev === 'artifact') { if (data.artifact) { setArtifact(data.artifact); } }
+              else if (ev === 'error') { srRef.current = srRef.current || ('Sorry - ' + (data.text || 'the agent failed.')); }
+              else if (ev === 'done') { if (data.artifact) { setArtifact(data.artifact); } }
+            });
+            return pump();
+          });
+        }
+        return pump();
+      }).catch(function () {
+        streamingRef.current = false; setStreaming(false); setStatusText('');
+        setMessages(function (p) { return p.concat([{ role: 'assistant', content: '(failed to reach the agent - please try again)' }]); });
+      });
+    }, [refreshConversation, loadConvos]);
+
+    var send = useCallback(function () {
+      var text = (draft || '').trim();
+      if (!text || streamingRef.current) { return; }
+      setDraft('');
+      setMessages(function (p) { return p.concat([{ role: 'user', content: text }]); });
+      if (!currentId) {
+        apost('/api/chat/conversations', {}).then(function (resp) {
+          if (resp && resp.conversation) { setCurrentId(resp.conversation.id); loadConvos(); doStream(resp.conversation.id, text); }
+        }).catch(function () {});
+      } else { doStream(currentId, text); }
+    }, [draft, currentId, doStream, loadConvos]);
+
+    var newChat = useCallback(function () {
+      apost('/api/chat/conversations', {}).then(function (resp) { if (resp && resp.conversation) { loadConvos(); setCurrentId(resp.conversation.id); } }).catch(function () {});
+    }, [loadConvos]);
+    var deleteConv = useCallback(function (id, e) {
+      e.stopPropagation();
+      apost('/api/chat/delete', { id: id }).then(function () { loadConvos(); if (id === currentId) { setCurrentId(null); } }).catch(function () {});
+    }, [loadConvos, currentId]);
+    var approve = useCallback(function (option, best) {
+      if (!artifact) { return; }
+      var payload = { conversationId: currentId, artifactId: artifact.id };
+      if (option) { payload.selectedOption = option; }
+      if (best) { payload.proceedWithBest = true; }
+      apost('/api/chat/approve', payload).then(function () { refreshConversation(currentId); }).catch(function () {});
+    }, [artifact, currentId, refreshConversation]);
+
+    function startDrag(which, e) {
+      e.preventDefault();
+      var startX = e.clientX, startL = leftW, startR = rightW;
+      function move(ev) {
+        if (which === 'left') { setLeftW(Math.max(190, Math.min(460, startL + (ev.clientX - startX)))); }
+        else { setRightW(Math.max(340, Math.min(900, startR - (ev.clientX - startX)))); }
+      }
+      function up() { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }
+      window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
+    }
+
+    function docBtn(label, suffix) { return h('button', { key: label, className: 'btn sm ghost', onClick: function () { window.open('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + suffix, '_blank'); } }, label); }
+    function docPanel() {
+      var build;
+      if (artifact.feasibility === 'not-possible') { build = h('div', { className: 'muted-note' }, 'Marked not feasible - refine the request before building.'); }
+      else if (artifact.status === 'building' || artifact.status === 'approved') { build = h('span', { className: 'muted-note' }, 'Build in progress - see the Code Autopilot tab.'); }
+      else if (artifact.status === 'built') { build = h('span', { className: 'muted-note' }, 'Built - a pull request was opened.'); }
+      else {
+        var opts = artifact.options || [];
+        if (opts.length > 1) {
+          build = [h('span', { key: 'l', className: 'muted-note', style: { width: '100%' } }, 'Choose an approach to build:')]
+            .concat(opts.map(function (o, i) { return h('button', { key: 'o' + i, className: 'btn sm', title: o.summary || '', onClick: function () { approve(o.label, false); } }, (o.recommended ? '\u2605 ' : '') + o.label); }))
+            .concat([h('button', { key: 'best', className: 'btn sm ghost', onClick: function () { approve(null, true); } }, 'Build best option')]);
+        } else {
+          var only = (opts[0] && opts[0].label) ? opts[0].label : null;
+          build = h('button', { className: 'btn sm', onClick: function () { approve(only, false); } }, 'Approve & build');
+        }
+      }
+      return h('div', { className: 'chat-doc', key: 'doc', style: { width: rightW } },
+        h('div', { className: 'chat-doc-top' },
+          h('span', { className: 'chat-doc-title2' }, artifact.title || 'Design document'),
+          artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
+          h('button', { className: 'chat-x', title: 'Close', onClick: function () { setDocOpen(false); } }, '\u00d7')
+        ),
+        h('div', { className: 'chat-doc-actions2' }, docBtn('Download .md', '&format=md&download=1'), docBtn('Download .html', '&format=html&download=1'), docBtn('Open HTML', '&format=html'),
+          h('button', { key: 'tr', className: 'btn sm ghost', onClick: function () { window.open('/api/chat/transcript?id=' + encodeURIComponent(currentId) + '&format=html', '_blank'); } }, 'Transcript')),
+        h('div', { className: 'chat-doc-build2' }, build),
+        h('div', { className: 'chat-doc-scroll' }, h('div', { className: 'cbody', ref: docBodyRef, dangerouslySetInnerHTML: { __html: docHtml || 'Rendering...' } }))
+      );
+    }
+
+    var sidebar = h('div', { key: 'sb', className: 'chat-sidebar', style: { width: leftW } },
+      h('button', { className: 'btn chat-newbtn', onClick: newChat }, '+ New chat'),
+      h('div', { className: 'chat-conv-list' },
+        convos.length === 0 ? h('div', { className: 'chat-empty' }, 'No conversations yet.') :
+        convos.map(function (c) {
+          return h('div', { key: c.id, className: 'chat-conv' + (c.id === currentId ? ' active' : ''), onClick: function () { setCurrentId(c.id); setDocOpen(false); } },
+            h('span', { className: 'title' }, c.title || 'New chat'),
+            h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { deleteConv(c.id, e); } }, '\u00d7'));
+        })
+      )
+    );
+
+    var msgEls = messages.map(function (m, i) { return h('div', { key: i, className: 'chat-msg ' + (m.role === 'user' ? 'user' : 'assistant') }, h('div', { className: 'chat-bubble' }, m.content)); });
+    var liveEl = null;
+    if (streaming) {
+      liveEl = streamReply
+        ? h('div', { key: 'live', className: 'chat-msg assistant' }, h('div', { className: 'chat-bubble' }, streamReply, h('span', { className: 'caret' })))
+        : h('div', { key: 'live', className: 'chat-msg assistant' }, h('div', { className: 'chat-bubble chat-typing' }, h('span', { className: 'dots' }, h('span', null), h('span', null), h('span', null)), h('span', null, statusText || 'Thinking')));
+    }
+    var thread = h('div', { className: 'chat-thread', ref: threadRef },
+      (messages.length === 0 && !streaming) ? h('div', { key: 'w', className: 'chat-welcome' }, h('h3', null, 'Design & build with Saturn'), h('p', null, 'Describe what you want to design or build. Saturn researches the whole codebase, checks feasibility, proposes options, and can open a pull request - all reviewed by you.')) : null,
+      msgEls, liveEl);
+    var docBar = (artifact && !docOpen) ? h('div', { className: 'chat-docbar' },
+      h('button', { className: 'btn sm', onClick: function () { setDocOpen(true); } }, '\ud83d\udcc4 Open design document'),
+      artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
+      h('span', { className: 'muted-note' }, artifact.title || '')) : null;
+    var composer = h('div', { className: 'chat-composer' },
+      h('textarea', { className: 'chat-input', rows: 2, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
+        onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
+      h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send'));
+    var mainCol = h('div', { key: 'main', className: 'chat-col' }, h('div', { className: 'chat-head' }, currentTitle(convos, currentId)), thread, docBar, composer);
+
+    var children = [sidebar, h('div', { key: 'ls', className: 'chat-splitter', onMouseDown: function (e) { startDrag('left', e); } }), mainCol];
+    if (docOpen && artifact) {
+      children.push(h('div', { key: 'rs', className: 'chat-splitter', onMouseDown: function (e) { startDrag('right', e); } }));
+      children.push(docPanel());
+    }
+    return h('div', { className: 'chat-shell' }, children);
+  }
+
+  var __chatMounted = false;
+  function mountChat() {
+    if (__chatMounted) { return; }
+    var root = document.getElementById('chat-root');
+    if (!root) { return; }
+    if (!window.React || !window.ReactDOM || !window.ReactDOM.createRoot) {
+      root.innerHTML = '<div class="chat-empty" style="padding:24px">The Chat UI could not load (React unavailable). Please reload the page.</div>';
+      return;
+    }
+    __chatMounted = true;
+    try { window.ReactDOM.createRoot(root).render(window.React.createElement(ChatApp)); } catch (e) {}
+  }
+
   (function () {
     var t = (new URLSearchParams(window.location.search).get('tab') || '').toLowerCase();
     showTab((t === 'codebase-audit' || t === 'audit') ? 'audit' : ((t === 'reviews' || t === 'pr') ? 'pr' : ((t === 'fix' || t === 'fix-agent') ? 'fix' : ((t === 'docs' || t === 'documentation') ? 'docs' : ((t === 'chat') ? 'chat' : 'dash')))));
@@ -2548,6 +2797,55 @@ function artifactFileName(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 60);
   return slug === '' ? 'design' : slug;
+}
+
+// Generic self-hosted vendored-asset reader (react, react-dom, ...): the deployed copy next to the bundle, or
+// from node_modules when running from source. Cached per deploy file name.
+const vendoredAssetCache = new Map<string, string | undefined>();
+function readVendoredAsset(deployFileName: string, relParts: readonly string[]): string | undefined {
+  if (vendoredAssetCache.has(deployFileName)) {
+    return vendoredAssetCache.get(deployFileName);
+  }
+  const candidatePaths: string[] = [];
+  const entryScript = process.argv.at(1);
+  if (entryScript !== undefined) {
+    candidatePaths.push(join(dirname(entryScript), deployFileName));
+  }
+  const seeds: string[] = [];
+  if (entryScript !== undefined) {
+    seeds.push(dirname(entryScript));
+  }
+  seeds.push(process.cwd());
+  for (const seed of seeds) {
+    let dir = seed;
+    for (let depth = 0; depth < 8; depth += 1) {
+      candidatePaths.push(join(dir, 'node_modules', ...relParts));
+      const parent = dirname(dir);
+      if (parent === dir) {
+        break;
+      }
+      dir = parent;
+    }
+  }
+  for (const candidatePath of candidatePaths) {
+    try {
+      if (existsSync(candidatePath)) {
+        const content = readFileSync(candidatePath, 'utf8');
+        vendoredAssetCache.set(deployFileName, content);
+        return content;
+      }
+    } catch {
+      /* unreadable candidate - try the next */
+    }
+  }
+  vendoredAssetCache.set(deployFileName, undefined);
+  return undefined;
+}
+
+function sseDelay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 interface SaturnDoc {
@@ -3278,6 +3576,26 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     res.end(mermaidJs);
     return;
   }
+  if (method === 'GET' && pathname === '/vendor/react.min.js') {
+    const js = readVendoredAsset('react.min.js', ['react', 'umd', 'react.production.min.js']);
+    if (js === undefined) {
+      sendJson(res, 404, { error: 'react not vendored' });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+    res.end(js);
+    return;
+  }
+  if (method === 'GET' && pathname === '/vendor/react-dom.min.js') {
+    const js = readVendoredAsset('react-dom.min.js', ['react-dom', 'umd', 'react-dom.production.min.js']);
+    if (js === undefined) {
+      sendJson(res, 404, { error: 'react-dom not vendored' });
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'public, max-age=86400' });
+    res.end(js);
+    return;
+  }
   if (method === 'GET' && pathname === '/api/chat/conversations') {
     // Chat is available to ALL viewers (no owner gate); the requester identity is recorded when known.
     sendJson(res, 200, { conversations: listConversations() });
@@ -3341,6 +3659,83 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       return;
     }
     sendJson(res, 200, result);
+    return;
+  }
+  if (method === 'POST' && pathname === '/api/chat/stream') {
+    // Server-Sent-Events streaming of a chat turn: live status while the model researches, then the reply
+    // text streamed in paced chunks, then a 'done' event carrying the (optional) design-doc artifact.
+    const raw = await readRequestBody(req);
+    let conversationId = '';
+    let message = '';
+    try {
+      const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
+      if (isRecord(parsed)) {
+        conversationId = typeof parsed['conversationId'] === 'string' ? parsed['conversationId'] : '';
+        message = typeof parsed['message'] === 'string' ? parsed['message'] : '';
+      }
+    } catch {
+      sendJson(res, 400, { error: 'invalid payload' });
+      return;
+    }
+    if (conversationId === '' || message.trim() === '') {
+      sendJson(res, 400, { error: 'conversationId and message are required' });
+      return;
+    }
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no'
+    });
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+    });
+    const send = (event: string, data: unknown): void => {
+      if (!closed && !res.writableEnded) {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      }
+    };
+    send('status', { text: 'Researching the codebase' });
+    const labels = ['Reading the repository', 'Assessing feasibility', 'Weighing options', 'Drafting the response'];
+    let labelIndex = 0;
+    const heartbeat = setInterval(() => {
+      send('status', { text: labels[labelIndex % labels.length] });
+      labelIndex += 1;
+    }, 3500);
+    let result: Awaited<ReturnType<typeof handleChatTurn>>;
+    try {
+      result = await handleChatTurn(conversationId, message.slice(0, 20000));
+    } catch {
+      clearInterval(heartbeat);
+      send('error', { text: 'The agent failed to respond. Please try again.' });
+      res.end();
+      return;
+    }
+    clearInterval(heartbeat);
+    if (result === undefined) {
+      send('error', { text: 'Conversation not found.' });
+      res.end();
+      return;
+    }
+    const assistantMessage = [...result.messages].reverse().find((m) => m.role === 'assistant');
+    const reply = assistantMessage !== undefined ? assistantMessage.content : '';
+    const tokens = reply.match(/\S+\s*/g) ?? (reply === '' ? [] : [reply]);
+    let buffer = '';
+    for (let i = 0; i < tokens.length && !closed; i += 1) {
+      buffer += tokens[i];
+      if (buffer.length >= 14 || i === tokens.length - 1) {
+        send('delta', { text: buffer });
+        buffer = '';
+        await sseDelay(22);
+      }
+    }
+    send('done', {
+      conversationId,
+      title: result.conversation.title,
+      ...(result.artifact !== undefined ? { artifact: result.artifact } : {})
+    });
+    res.end();
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/rename') {

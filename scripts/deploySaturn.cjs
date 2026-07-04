@@ -128,6 +128,36 @@ if (sourceMermaid) {
   );
 }
 
+// Copy the React 18 UMD bundles next to the deployed bundle so the dashboard serves them from /vendor/
+// (self-hosted, no CDN) for the React-based Chat tab.
+function findVendorFile(startDir, relParts) {
+  let dir = startDir;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(dir, "node_modules", ...relParts);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return undefined;
+}
+[
+  { rel: ["react", "umd", "react.production.min.js"], out: "react.min.js" },
+  { rel: ["react-dom", "umd", "react-dom.production.min.js"], out: "react-dom.min.js" },
+].forEach(function (v) {
+  const src = findVendorFile(packageRoot, v.rel);
+  if (src) {
+    copyFileSync(src, path.join(deployDir, v.out));
+    console.log(`  bundled ${v.out} (npm) -> ${path.join(deployDir, v.out)}`);
+  } else {
+    console.warn(`  WARNING: ${v.out} not found in node_modules - the Chat tab will fall back to the CDN.`);
+  }
+});
+
 // Copy the docs folder + README next to the bundle so the dashboard's Documentation tab can read them at runtime.
 const sourceDocsDir = path.join(packageRoot, "docs");
 const deployedDocsDir = path.join(deployDir, "docs");

@@ -8,47 +8,47 @@ import type { ChatMessage } from './chatStore';
 // are emitted as <pre class="mermaid"> so the client (or a standalone doc) can render them with mermaid.js.
 
 export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 // Render inline markdown (code spans, links, bold, italic) on a single line. Code spans are protected first
 // so their contents are never re-processed; everything is escaped, and link URLs are scheme-whitelisted.
 function renderInline(text: string): string {
-  const parts = text.split(/(`[^`]+`)/g);
-  return parts
-    .map((part) => {
-      if (part.length >= 2 && part.startsWith('`') && part.endsWith('`')) {
-        return `<code>${escapeHtml(part.slice(1, -1))}</code>`;
-      }
-      let out = escapeHtml(part);
-      out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label: string, url: string) => {
-        return /^(https?:\/\/|\/|#)/i.test(url)
-          ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
-          : match;
-      });
-      out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-      out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-      out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-      return out;
-    })
-    .join('');
+    const parts = text.split(/(`[^`]+`)/g);
+    return parts
+        .map((part) => {
+            if (part.length >= 2 && part.startsWith('`') && part.endsWith('`')) {
+                return `<code>${escapeHtml(part.slice(1, -1))}</code>`;
+            }
+            let out = escapeHtml(part);
+            out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (match, label: string, url: string) => {
+                return /^(https?:\/\/|\/|#)/i.test(url)
+                    ? `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
+                    : match;
+            });
+            out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+            out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            return out;
+        })
+        .join('');
 }
 
 function isTableSeparator(line: string): boolean {
-  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
+    return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(line);
 }
 
 function splitRow(line: string): string[] {
-  return line
-    .replace(/^\s*\|/, '')
-    .replace(/\|\s*$/, '')
-    .split('|')
-    .map((cell) => cell.trim());
+    return line
+        .replace(/^\s*\|/, '')
+        .replace(/\|\s*$/, '')
+        .split('|')
+        .map((cell) => cell.trim());
 }
 
 /**
@@ -56,125 +56,125 @@ function splitRow(line: string): string[] {
  * (incl. mermaid), lists, blockquotes, tables, horizontal rules, and paragraphs with inline formatting.
  */
 export function renderMarkdownToSafeHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
-  const html: string[] = [];
-  let index = 0;
+    const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+    const html: string[] = [];
+    let index = 0;
 
-  const paragraph: string[] = [];
-  const flushParagraph = (): void => {
-    if (paragraph.length > 0) {
-      html.push(`<p>${paragraph.map(renderInline).join(' ')}</p>`);
-      paragraph.length = 0;
-    }
-  };
+    const paragraph: string[] = [];
+    const flushParagraph = (): void => {
+        if (paragraph.length > 0) {
+            html.push(`<p>${paragraph.map(renderInline).join(' ')}</p>`);
+            paragraph.length = 0;
+        }
+    };
 
-  while (index < lines.length) {
-    const line = lines[index] ?? '';
+    while (index < lines.length) {
+        const line = lines[index] ?? '';
 
-    // Fenced code block (``` or ```lang).
-    const fence = /^```\s*([A-Za-z0-9_-]*)\s*$/.exec(line);
-    if (fence) {
-      flushParagraph();
-      const lang = (fence[1] ?? '').toLowerCase();
-      const body: string[] = [];
-      index += 1;
-      while (index < lines.length && !/^```\s*$/.test(lines[index] ?? '')) {
-        body.push(lines[index] ?? '');
+        // Fenced code block (``` or ```lang).
+        const fence = /^```\s*([A-Za-z0-9_-]*)\s*$/.exec(line);
+        if (fence) {
+            flushParagraph();
+            const lang = (fence[1] ?? '').toLowerCase();
+            const body: string[] = [];
+            index += 1;
+            while (index < lines.length && !/^```\s*$/.test(lines[index] ?? '')) {
+                body.push(lines[index] ?? '');
+                index += 1;
+            }
+            index += 1; // skip closing fence
+            if (lang === 'mermaid') {
+                html.push(`<pre class="mermaid">${escapeHtml(body.join('\n'))}</pre>`);
+            } else {
+                html.push(`<pre class="code"><code>${escapeHtml(body.join('\n'))}</code></pre>`);
+            }
+            continue;
+        }
+
+        // Heading.
+        const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+        if (heading) {
+            flushParagraph();
+            const level = (heading[1] ?? '#').length;
+            html.push(`<h${String(level)}>${renderInline((heading[2] ?? '').trim())}</h${String(level)}>`);
+            index += 1;
+            continue;
+        }
+
+        // Horizontal rule.
+        if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+            flushParagraph();
+            html.push('<hr/>');
+            index += 1;
+            continue;
+        }
+
+        // Table (a | row | followed by a |---|---| separator).
+        if (/^\s*\|.*\|\s*$/.test(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1] ?? '')) {
+            flushParagraph();
+            const header = splitRow(line);
+            index += 2;
+            const rows: string[][] = [];
+            while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index] ?? '')) {
+                rows.push(splitRow(lines[index] ?? ''));
+                index += 1;
+            }
+            const head = header.map((cell) => `<th>${renderInline(cell)}</th>`).join('');
+            const bodyRows = rows
+                .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join('')}</tr>`)
+                .join('');
+            html.push(`<table><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table>`);
+            continue;
+        }
+
+        // Blockquote.
+        if (/^\s*>\s?/.test(line)) {
+            flushParagraph();
+            const quote: string[] = [];
+            while (index < lines.length && /^\s*>\s?/.test(lines[index] ?? '')) {
+                quote.push((lines[index] ?? '').replace(/^\s*>\s?/, ''));
+                index += 1;
+            }
+            html.push(`<blockquote>${quote.map(renderInline).join('<br/>')}</blockquote>`);
+            continue;
+        }
+
+        // Unordered list.
+        if (/^\s*[-*+]\s+/.test(line)) {
+            flushParagraph();
+            const items: string[] = [];
+            while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index] ?? '')) {
+                items.push(`<li>${renderInline((lines[index] ?? '').replace(/^\s*[-*+]\s+/, ''))}</li>`);
+                index += 1;
+            }
+            html.push(`<ul>${items.join('')}</ul>`);
+            continue;
+        }
+
+        // Ordered list.
+        if (/^\s*\d+\.\s+/.test(line)) {
+            flushParagraph();
+            const items: string[] = [];
+            while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index] ?? '')) {
+                items.push(`<li>${renderInline((lines[index] ?? '').replace(/^\s*\d+\.\s+/, ''))}</li>`);
+                index += 1;
+            }
+            html.push(`<ol>${items.join('')}</ol>`);
+            continue;
+        }
+
+        // Blank line ends a paragraph.
+        if (line.trim() === '') {
+            flushParagraph();
+            index += 1;
+            continue;
+        }
+
+        paragraph.push(line.trim());
         index += 1;
-      }
-      index += 1; // skip closing fence
-      if (lang === 'mermaid') {
-        html.push(`<pre class="mermaid">${escapeHtml(body.join('\n'))}</pre>`);
-      } else {
-        html.push(`<pre class="code"><code>${escapeHtml(body.join('\n'))}</code></pre>`);
-      }
-      continue;
     }
-
-    // Heading.
-    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      flushParagraph();
-      const level = (heading[1] ?? '#').length;
-      html.push(`<h${String(level)}>${renderInline((heading[2] ?? '').trim())}</h${String(level)}>`);
-      index += 1;
-      continue;
-    }
-
-    // Horizontal rule.
-    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
-      flushParagraph();
-      html.push('<hr/>');
-      index += 1;
-      continue;
-    }
-
-    // Table (a | row | followed by a |---|---| separator).
-    if (/^\s*\|.*\|\s*$/.test(line) && index + 1 < lines.length && isTableSeparator(lines[index + 1] ?? '')) {
-      flushParagraph();
-      const header = splitRow(line);
-      index += 2;
-      const rows: string[][] = [];
-      while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index] ?? '')) {
-        rows.push(splitRow(lines[index] ?? ''));
-        index += 1;
-      }
-      const head = header.map((cell) => `<th>${renderInline(cell)}</th>`).join('');
-      const bodyRows = rows
-        .map((row) => `<tr>${row.map((cell) => `<td>${renderInline(cell)}</td>`).join('')}</tr>`)
-        .join('');
-      html.push(`<table><thead><tr>${head}</tr></thead><tbody>${bodyRows}</tbody></table>`);
-      continue;
-    }
-
-    // Blockquote.
-    if (/^\s*>\s?/.test(line)) {
-      flushParagraph();
-      const quote: string[] = [];
-      while (index < lines.length && /^\s*>\s?/.test(lines[index] ?? '')) {
-        quote.push((lines[index] ?? '').replace(/^\s*>\s?/, ''));
-        index += 1;
-      }
-      html.push(`<blockquote>${quote.map(renderInline).join('<br/>')}</blockquote>`);
-      continue;
-    }
-
-    // Unordered list.
-    if (/^\s*[-*+]\s+/.test(line)) {
-      flushParagraph();
-      const items: string[] = [];
-      while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index] ?? '')) {
-        items.push(`<li>${renderInline((lines[index] ?? '').replace(/^\s*[-*+]\s+/, ''))}</li>`);
-        index += 1;
-      }
-      html.push(`<ul>${items.join('')}</ul>`);
-      continue;
-    }
-
-    // Ordered list.
-    if (/^\s*\d+\.\s+/.test(line)) {
-      flushParagraph();
-      const items: string[] = [];
-      while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index] ?? '')) {
-        items.push(`<li>${renderInline((lines[index] ?? '').replace(/^\s*\d+\.\s+/, ''))}</li>`);
-        index += 1;
-      }
-      html.push(`<ol>${items.join('')}</ol>`);
-      continue;
-    }
-
-    // Blank line ends a paragraph.
-    if (line.trim() === '') {
-      flushParagraph();
-      index += 1;
-      continue;
-    }
-
-    paragraph.push(line.trim());
-    index += 1;
-  }
-  flushParagraph();
-  return html.join('\n');
+    flushParagraph();
+    return html.join('\n');
 }
 
 const DOC_STYLES = `
@@ -204,31 +204,31 @@ const DOC_STYLES = `
  * pass '' to omit diagram rendering.
  */
 export function buildHtmlDocument(title: string, bodyHtml: string, mermaidScript: string): string {
-  const mermaidInit =
-    mermaidScript === ''
-      ? ''
-      : `${mermaidScript}\n<script>try{mermaid.initialize({startOnLoad:true,securityLevel:'strict',theme:'default'});}catch(e){}</script>`;
-  return [
-    '<!doctype html>',
-    '<html lang="en"><head><meta charset="utf-8"/>',
-    '<meta name="viewport" content="width=device-width, initial-scale=1"/>',
-    `<title>${escapeHtml(title)}</title>`,
-    `<style>${DOC_STYLES}</style>`,
-    '</head><body>',
-    bodyHtml,
-    mermaidInit,
-    '</body></html>'
-  ].join('\n');
+    const mermaidInit =
+        mermaidScript === ''
+            ? ''
+            : `${mermaidScript}\n<script>try{mermaid.initialize({startOnLoad:true,securityLevel:'strict',theme:'default'});}catch(e){}</script>`;
+    return [
+        '<!doctype html>',
+        '<html lang="en"><head><meta charset="utf-8"/>',
+        '<meta name="viewport" content="width=device-width, initial-scale=1"/>',
+        `<title>${escapeHtml(title)}</title>`,
+        `<style>${DOC_STYLES}</style>`,
+        '</head><body>',
+        bodyHtml,
+        mermaidInit,
+        '</body></html>'
+    ].join('\n');
 }
 
 /** Build a standalone HTML transcript of a conversation (user + assistant messages, markdown-rendered). */
 export function buildTranscriptDocument(title: string, messages: readonly ChatMessage[], mermaidScript: string): string {
-  const body = messages
-    .filter((message) => message.role !== 'system')
-    .map((message) => {
-      const role = message.role === 'user' ? 'User' : 'Saturn';
-      return `<div class="msg ${escapeHtml(message.role)}"><div class="role">${escapeHtml(role)}</div>${renderMarkdownToSafeHtml(message.content)}</div>`;
-    })
-    .join('\n');
-  return buildHtmlDocument(title, `<h1>${escapeHtml(title)}</h1>\n${body}`, mermaidScript);
+    const body = messages
+        .filter((message) => message.role !== 'system')
+        .map((message) => {
+            const role = message.role === 'user' ? 'User' : 'Saturn';
+            return `<div class="msg ${escapeHtml(message.role)}"><div class="role">${escapeHtml(role)}</div>${renderMarkdownToSafeHtml(message.content)}</div>`;
+        })
+        .join('\n');
+    return buildHtmlDocument(title, `<h1>${escapeHtml(title)}</h1>\n${body}`, mermaidScript);
 }
