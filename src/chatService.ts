@@ -143,7 +143,8 @@ function upsertArtifact(
  */
 export async function handleChatTurn(
     conversationId: string,
-    userMessage: string
+    userMessage: string,
+    onProgress?: (chunk: string) => void
 ): Promise<ChatTurnResult | undefined> {
     let conversation = getConversation(conversationId);
     if (conversation === undefined) {
@@ -181,7 +182,7 @@ export async function handleChatTurn(
         ...(env.allowMcpServerName !== undefined ? { allowMcpServerName: env.allowMcpServerName } : {})
     };
 
-    const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger);
+    const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger, onProgress);
 
     let artifact: Artifact | undefined;
     if (result.designDoc !== undefined) {

@@ -524,6 +524,22 @@ const DASHBOARD_HTML = `<!doctype html>
   @keyframes cdot { 0%,60%,100%{ transform:translateY(0); opacity:.35; } 30%{ transform:translateY(-4px); opacity:1; } }
   .caret { display:inline-block; width:8px; height:15px; margin-left:2px; background:currentColor; vertical-align:text-bottom; animation:cblink 1s steps(2) infinite; opacity:.7; }
   @keyframes cblink { 0%,100%{opacity:0;} 50%{opacity:.8;} }
+  .chat-live { display:flex; flex-direction:column; gap:8px; max-width:82%; }
+  .cot { border:1px solid var(--line,#232a44); border-radius:10px; background:rgba(127,127,127,.06); font-size:12.5px; overflow:hidden; }
+  .cot-head { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px; cursor:pointer; color:var(--muted,#8b93b5); }
+  .cot-title { font-weight:600; }
+  .cot-toggle { font-size:11px; opacity:.7; }
+  .cot-body { max-height:210px; overflow-y:auto; padding:8px 12px; border-top:1px solid var(--line,#232a44); font-family:'Cascadia Code',Consolas,monospace; }
+  .cot-line { white-space:pre-wrap; word-break:break-word; opacity:.85; padding:1px 0; }
+  .chat-md > :first-child { margin-top:0; } .chat-md > :last-child { margin-bottom:0; }
+  .chat-md p { margin:0 0 8px; }
+  .chat-md ul,.chat-md ol { margin:6px 0; padding-left:22px; }
+  .chat-md li { margin:2px 0; }
+  .chat-md code { background:rgba(0,0,0,.28); padding:1px 5px; border-radius:4px; font-size:.92em; }
+  .chat-md pre.code { background:#0b1020; color:#e6e9f0; padding:10px; border-radius:8px; overflow:auto; }
+  .chat-md pre.code code { background:none; padding:0; }
+  .chat-md h1,.chat-md h2,.chat-md h3 { font-size:15px; margin:8px 0 4px; line-height:1.3; }
+  .chat-md a { color:#9db8ff; }
   .chat-docbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line,#232a44); background:rgba(41,82,227,.06); }
   .chat-composer { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line,#232a44); align-items:flex-end; }
   .chat-input { flex:1; resize:none; max-height:160px; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
@@ -2378,11 +2394,14 @@ const DASHBOARD_HTML = `<!doctype html>
     var s10 = useState(500); var rightW = s10[0], setRightW = s10[1];
     var s11 = useState(''); var docHtml = s11[0], setDocHtml = s11[1];
     var s12 = useState(''); var draft = s12[0], setDraft = s12[1];
+    var s13 = useState([]); var cot = s13[0], setCot = s13[1];
+    var s14 = useState(true); var cotOpen = s14[0], setCotOpen = s14[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
     var streamingRef = useRef(false);
     var srRef = useRef('');
+    var cotRef = useRef(null);
 
     var loadConvos = useCallback(function () {
       fetch('/api/chat/conversations').then(function (r) { return r.json(); }).then(function (d) { setConvos((d && d.conversations) || []); }).catch(function () {});
@@ -2403,6 +2422,7 @@ const DASHBOARD_HTML = `<!doctype html>
       }).catch(function () {});
     }, [currentId]);
     useEffect(function () { var el = threadRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [messages, streamReply, statusText, streaming]);
+    useEffect(function () { var el = cotRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [cot]);
     useEffect(function () {
       if (!docOpen || !artifact) { setDocHtml(''); return; }
       fetch('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + '&format=fragment').then(function (r) { return r.text(); }).then(function (html) { setDocHtml(html); }).catch(function () { setDocHtml('<div class="chat-empty">Could not render the document.</div>'); });
@@ -2423,6 +2443,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     var doStream = useCallback(function (convId, text) {
       setStreaming(true); streamingRef.current = true; setStatusText('Sending'); setStreamReply(''); srRef.current = '';
+      setCot([]); setCotOpen(true);
       var NL = String.fromCharCode(10);
       fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: convId, message: text }) }).then(function (resp) {
         if (!resp.body) { throw new Error('no stream'); }
@@ -2451,10 +2472,11 @@ const DASHBOARD_HTML = `<!doctype html>
               if (!dataStr) { return; }
               var data; try { data = JSON.parse(dataStr); } catch (e) { return; }
               if (ev === 'status') { setStatusText(data.text || ''); }
-              else if (ev === 'delta') { setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
+              else if (ev === 'cot') { setCot(function (p) { var n = p.concat([data.text || '']); return n.length > 200 ? n.slice(n.length - 200) : n; }); }
+              else if (ev === 'delta') { setCotOpen(false); setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
               else if (ev === 'artifact') { if (data.artifact) { setArtifact(data.artifact); } }
               else if (ev === 'error') { srRef.current = srRef.current || ('Sorry - ' + (data.text || 'the agent failed.')); }
-              else if (ev === 'done') { if (data.artifact) { setArtifact(data.artifact); } }
+              else if (ev === 'done') { if (data.artifact) { setArtifact(data.artifact); } if (data.title) { setConvos(function (p) { return p.map(function (c) { return c.id === convId ? Object.assign({}, c, { title: data.title }) : c; }); }); } }
             });
             return pump();
           });
@@ -2485,6 +2507,13 @@ const DASHBOARD_HTML = `<!doctype html>
       e.stopPropagation();
       apost('/api/chat/delete', { id: id }).then(function () { loadConvos(); if (id === currentId) { setCurrentId(null); } }).catch(function () {});
     }, [loadConvos, currentId]);
+    var renameConv = useCallback(function (c, e) {
+      e.stopPropagation();
+      var name = window.prompt('Rename conversation', c.title || '');
+      if (name === null) { return; }
+      var t = name.trim(); if (t === '') { return; }
+      apost('/api/chat/rename', { id: c.id, title: t }).then(function () { setConvos(function (p) { return p.map(function (x) { return x.id === c.id ? Object.assign({}, x, { title: t }) : x; }); }); }).catch(function () {});
+    }, []);
     var approve = useCallback(function (option, best) {
       if (!artifact) { return; }
       var payload = { conversationId: currentId, artifactId: artifact.id };
@@ -2541,17 +2570,26 @@ const DASHBOARD_HTML = `<!doctype html>
         convos.map(function (c) {
           return h('div', { key: c.id, className: 'chat-conv' + (c.id === currentId ? ' active' : ''), onClick: function () { setCurrentId(c.id); setDocOpen(false); } },
             h('span', { className: 'title' }, c.title || 'New chat'),
+            h('button', { className: 'del', title: 'Rename', onClick: function (e) { renameConv(c, e); } }, '\u270e'),
             h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { deleteConv(c.id, e); } }, '\u00d7'));
         })
       )
     );
 
-    var msgEls = messages.map(function (m, i) { return h('div', { key: i, className: 'chat-msg ' + (m.role === 'user' ? 'user' : 'assistant') }, h('div', { className: 'chat-bubble' }, m.content)); });
+    var msgEls = messages.map(function (m, i) {
+      var bubble = (m.role === 'assistant' && m.contentHtml)
+        ? h('div', { className: 'chat-bubble chat-md', dangerouslySetInnerHTML: { __html: m.contentHtml } })
+        : h('div', { className: 'chat-bubble' }, m.content);
+      return h('div', { key: i, className: 'chat-msg ' + (m.role === 'user' ? 'user' : 'assistant') }, bubble);
+    });
     var liveEl = null;
     if (streaming) {
-      liveEl = streamReply
-        ? h('div', { key: 'live', className: 'chat-msg assistant' }, h('div', { className: 'chat-bubble' }, streamReply, h('span', { className: 'caret' })))
-        : h('div', { key: 'live', className: 'chat-msg assistant' }, h('div', { className: 'chat-bubble chat-typing' }, h('span', { className: 'dots' }, h('span', null), h('span', null), h('span', null)), h('span', null, statusText || 'Thinking')));
+      var cotHead = h('div', { className: 'cot-head', onClick: function () { setCotOpen(!cotOpen); } },
+        h('span', { className: 'cot-title' }, streamReply ? 'Thought process' : (statusText || 'Thinking')),
+        (!streamReply && cot.length === 0) ? h('span', { className: 'dots' }, h('span', null), h('span', null), h('span', null)) : h('span', { className: 'cot-toggle' }, cotOpen ? 'Hide' : 'Show'));
+      var cotBody = (cotOpen && cot.length) ? h('div', { className: 'cot-body', ref: cotRef }, cot.map(function (l, i) { return h('div', { key: i, className: 'cot-line' }, l); })) : null;
+      var live = h('div', { className: 'chat-live' }, h('div', { className: 'cot' }, cotHead, cotBody), streamReply ? h('div', { className: 'chat-bubble' }, streamReply, h('span', { className: 'caret' })) : null);
+      liveEl = h('div', { key: 'live', className: 'chat-msg assistant' }, live);
     }
     var thread = h('div', { className: 'chat-thread', ref: threadRef },
       (messages.length === 0 && !streaming) ? h('div', { key: 'w', className: 'chat-welcome' }, h('h3', null, 'Design & build with Saturn'), h('p', null, 'Describe what you want to design or build. Saturn researches the whole codebase, checks feasibility, proposes options, and can open a pull request - all reviewed by you.')) : null,
@@ -3632,7 +3670,11 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       return;
     }
     const artifact = latestArtifact(id);
-    sendJson(res, 200, { conversation, messages: listMessages(id), ...(artifact !== undefined ? { artifact } : {}) });
+    // Assistant messages carry a server-rendered, XSS-safe HTML rendering so the client shows formatted text.
+    const messages = listMessages(id).map((m) =>
+      m.role === 'assistant' ? { ...m, contentHtml: renderMarkdownToSafeHtml(m.content) } : m
+    );
+    sendJson(res, 200, { conversation, messages, ...(artifact !== undefined ? { artifact } : {}) });
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/message') {
@@ -3697,15 +3739,43 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       }
     };
     send('status', { text: 'Researching the codebase' });
+    // Stream the CLI's live activity as chain-of-thought: buffer output into lines, strip ANSI, and stop once
+    // the model starts emitting the final JSON answer (that is streamed separately as the reply text).
+    let cotBuffer = '';
+    let jsonStarted = false;
+    let lastCot = Date.now();
+    const onProgress = (chunk: string): void => {
+      if (jsonStarted || closed) {
+        return;
+      }
+      cotBuffer += chunk;
+      const parts = cotBuffer.split('\n');
+      cotBuffer = parts.pop() ?? '';
+      for (const rawLine of parts) {
+        const line = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+$/, '').trim();
+        if (line === '') {
+          continue;
+        }
+        if (/["']?reply["']?\s*:/.test(line) || /^```json/i.test(line) || (line.startsWith('{') && line.length <= 3)) {
+          jsonStarted = true;
+          return;
+        }
+        send('cot', { text: line.slice(0, 500) });
+        lastCot = Date.now();
+      }
+    };
+    // Fallback status only when no live CoT arrived recently, so the panel is never silent during long calls.
     const labels = ['Reading the repository', 'Assessing feasibility', 'Weighing options', 'Drafting the response'];
     let labelIndex = 0;
     const heartbeat = setInterval(() => {
-      send('status', { text: labels[labelIndex % labels.length] });
-      labelIndex += 1;
+      if (Date.now() - lastCot > 4000) {
+        send('status', { text: labels[labelIndex % labels.length] });
+        labelIndex += 1;
+      }
     }, 3500);
     let result: Awaited<ReturnType<typeof handleChatTurn>>;
     try {
-      result = await handleChatTurn(conversationId, message.slice(0, 20000));
+      result = await handleChatTurn(conversationId, message.slice(0, 20000), onProgress);
     } catch {
       clearInterval(heartbeat);
       send('error', { text: 'The agent failed to respond. Please try again.' });

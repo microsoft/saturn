@@ -161,7 +161,7 @@ function buildDesignPrompt(input: DesignTurnInput): string {
         '  "options": [ { "label": "short name", "summary": "1-2 sentences", "recommended": true|false } ],',
         '  "askAudience": true|false,',
         '  "designDoc": { "title": "short title", "markdown": "full design doc with mermaid" } | null,',
-        '  "suggestedTitle": "a short (<= 6 word) title for this conversation or null"',
+        '  "suggestedTitle": "a concise (<= 6 word) descriptive title summarizing the topic - ALWAYS provide one; do not echo the user question verbatim"',
         '}'
     ].join('\n');
 }
@@ -216,7 +216,8 @@ function toOptions(raw: z.infer<typeof responseSchema>['options']): readonly Des
 export async function runDesignTurn(
     ctx: DesignAgentContext,
     input: DesignTurnInput,
-    logger: Logger
+    logger: Logger,
+    onProgress?: (chunk: string) => void
 ): Promise<DesignTurnResult> {
     const prompt = buildDesignPrompt(input);
     let result;
@@ -228,7 +229,8 @@ export async function runDesignTurn(
             reasoningEffort: ctx.reasoningEffort,
             cwd: ctx.repoRoot,
             timeoutMs: ctx.timeoutMs,
-            ...(ctx.allowMcpServerName !== undefined ? { allowMcpServerName: ctx.allowMcpServerName } : {})
+            ...(ctx.allowMcpServerName !== undefined ? { allowMcpServerName: ctx.allowMcpServerName } : {}),
+            ...(onProgress !== undefined ? { onProgress } : {})
         });
     } catch (error) {
         logger.warn(`Design agent: Copilot invocation failed: ${describeError(error)}`);

@@ -16,6 +16,8 @@ export interface RunCommandOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly timeoutMs?: number;
   readonly shell?: boolean;
+  /** Called with each stdout/stderr chunk as it arrives (for live streaming); output is still captured. */
+  readonly onOutput?: (chunk: string, stream: 'stdout' | 'stderr') => void;
 }
 
 /** Captured result of a child process. */
@@ -117,6 +119,7 @@ export function runCommandAsync(
       if (stdoutBytes <= MAX_CAPTURED_OUTPUT_BYTES) {
         stdout += chunk;
       }
+      options.onOutput?.(chunk, 'stdout');
     });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string) => {
@@ -124,6 +127,7 @@ export function runCommandAsync(
       if (stderrBytes <= MAX_CAPTURED_OUTPUT_BYTES) {
         stderr += chunk;
       }
+      options.onOutput?.(chunk, 'stderr');
     });
 
     child.on('error', (error: Error) => {

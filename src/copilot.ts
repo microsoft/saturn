@@ -30,7 +30,7 @@ export function recordModelFailure(): void {
     usingBackup = true;
     console.warn(
       `[Saturn] Primary model failed ${String(consecutiveModelFailures)} times consecutively. ` +
-        `Switching to backup model (${backupModel()}) until restart.`
+      `Switching to backup model (${backupModel()}) until restart.`
     );
   }
 }
@@ -369,6 +369,8 @@ export interface RunCopilotReviewOptions {
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly allowMcpServerName?: string;
+  /** Called with each raw CLI output chunk as it arrives, for live progress / chain-of-thought streaming. */
+  readonly onProgress?: (chunk: string) => void;
 }
 
 // Choose how to spawn the launcher: PowerShell scripts go through `powershell -File` (so multi-line
@@ -454,10 +456,12 @@ async function runCopilotWithDeniedTools(
     }
 
     const invocation = buildInvocation(options.cliPath, baseArgs);
+    const onProgress = options.onProgress;
     return runCommandAsync(invocation.command, invocation.args, {
       cwd: options.cwd,
       timeoutMs: options.timeoutMs,
-      shell: invocation.shell
+      shell: invocation.shell,
+      ...(onProgress !== undefined ? { onOutput: (chunk: string) => { onProgress(chunk); } } : {})
     });
   };
 
