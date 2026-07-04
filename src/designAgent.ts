@@ -271,6 +271,7 @@ export async function generateTitle(
 ): Promise<string | undefined> {
     const prompt = [
         'Generate a concise title for a chat conversation that begins with the user message below.',
+        'Do NOT use any tools and do NOT read or search any files - base the title ONLY on the message text.',
         'Rules: at most 6 words, Title Case, describe the topic, no surrounding quotes, no trailing punctuation.',
         'Reply with ONLY the title text and nothing else.',
         '',
@@ -281,6 +282,7 @@ export async function generateTitle(
         const result = await runCopilotReview({
             cliPath: ctx.cliPath,
             prompt,
+            outputFormat: 'json',
             model: ctx.model,
             reasoningEffort: 'low',
             cwd: ctx.repoRoot,
@@ -289,7 +291,8 @@ export async function generateTitle(
         if (result.status !== 0) {
             return undefined;
         }
-        const firstLine = (extractAssistantText(result.stdout).split('\n').find((line) => line.trim() !== '') ?? '').trim();
+        const nonEmptyLines = extractAssistantText(result.stdout).split('\n').map((line) => line.trim()).filter((line) => line !== '');
+        const firstLine = nonEmptyLines.length > 0 ? nonEmptyLines[nonEmptyLines.length - 1] : '';
         const cleaned = firstLine
             .replace(/^["'`\s]+/, '')
             .replace(/["'`\s]+$/, '')
