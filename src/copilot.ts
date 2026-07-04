@@ -369,6 +369,8 @@ export interface RunCopilotReviewOptions {
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly allowMcpServerName?: string;
+  /** When 'json', run the CLI with --output-format json --stream on (JSONL event stream for live CoT). */
+  readonly outputFormat?: 'text' | 'json';
   /** Called with each raw CLI output chunk as it arrives, for live progress / chain-of-thought streaming. */
   readonly onProgress?: (chunk: string) => void;
 }
@@ -453,6 +455,10 @@ async function runCopilotWithDeniedTools(
 
     if (options.allowMcpServerName !== undefined) {
       baseArgs.push(`--allow-tool=${options.allowMcpServerName}`);
+    }
+    if (options.outputFormat === 'json') {
+      // JSONL event stream: emits MCP/tool/turn events + assistant message deltas live (for the CoT UI).
+      baseArgs.push('--output-format', 'json', '--stream', 'on');
     }
 
     const invocation = buildInvocation(options.cliPath, baseArgs);

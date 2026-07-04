@@ -57,7 +57,9 @@ export interface DesignTurnResult {
 }
 
 const MAX_HISTORY_MESSAGES = 24;
-const MAX_MESSAGE_CHARS = 6000;
+const MAX_MESSAGE_CHARS = 8000;
+// The user's current message can be large (e.g. a pasted spec / requirements doc); allow up to ~1MB.
+const MAX_USER_MESSAGE_CHARS = 1_000_000;
 
 function truncate(text: string, max: number): string {
     return text.length <= max ? text : `${text.slice(0, max)}\n...[truncated]`;
@@ -150,24 +152,19 @@ function buildDesignPrompt(input: DesignTurnInput): string {
         renderHistory(input.history),
         '',
         'NEW USER MESSAGE:',
-        truncate(input.userMessage, MAX_MESSAGE_CHARS),
+        truncate(input.userMessage, MAX_USER_MESSAGE_CHARS),
         '',
-        'RESPOND IN EXACTLY THREE SECTIONS, IN THIS ORDER, each introduced by its EXACT marker line alone on a line:',
-        '[[THINK]]',
-        'A few short lines of your reasoning as you work: what you checked in the code, key feasibility',
-        'considerations, and trade-offs. This is shown to the user live as your thinking - keep it brief and human.',
-        '[[REPLY]]',
-        'Your conversational reply to the user, in markdown. This is streamed to the user as the answer; put the',
-        'human-facing message HERE (not in the JSON below).',
-        '[[META]]',
-        'A single JSON object (no prose, no code fence) with the structured result:',
+        'RESPOND IN EXACTLY TWO PARTS, IN THIS ORDER (the user already sees your live tool activity, so do NOT',
+        'narrate a separate thinking section):',
+        '1) Your conversational reply to the user in markdown - this is streamed live to the user as the answer.',
+        '2) Then, on a NEW LINE, the EXACT marker [[META]] alone, followed by a single JSON object (no prose, no',
+        '   code fence) with the structured result:',
         '{',
         '  "feasibility": "possible" | "not-possible" | "conditional" | null,',
         '  "reason": "why, especially if not-possible/conditional (or null)",',
         '  "options": [ { "label": "short name", "summary": "1-2 sentences", "recommended": true|false } ],',
         '  "askAudience": true|false,',
-        '  "designDoc": { "title": "short title", "markdown": "full design doc with mermaid" } | null,',
-        '  "suggestedTitle": "a concise (<= 6 word) descriptive title summarizing the topic - ALWAYS provide one; do not echo the user question verbatim"',
+        '  "designDoc": { "title": "short title", "markdown": "full design doc with mermaid" } | null',
         '}'
     ].join('\n');
 }
@@ -204,18 +201,52 @@ function extractJson(output: string): string | undefined {
     return undefined;
 }
 
-/** Split the agent's sectioned output into its THINK / REPLY / META parts (empty strings when a marker is absent). */
-function parseSections(output: string): { readonly think: string; readonly reply: string; readonly meta: string } {
-    const thinkIdx = output.indexOf('[[THINK]]');
-    const replyIdx = output.indexOf('[[REPLY]]');
+/** Split the agent's reply text into the human reply and the trailing [[META]] JSON section. */
+function parseReplyMeta(output: string): { readonly reply: string; readonly meta: string } {
     const metaIdx = output.indexOf('[[META]]');
-    if (replyIdx === -1 || metaIdx === -1 || metaIdx < replyIdx) {
-        return { think: '', reply: '', meta: '' };
+    if (metaIdx === -1) {
+        return { reply: output.trim(), meta: '' };
     }
-    const think = thinkIdx !== -1 && thinkIdx < replyIdx ? output.slice(thinkIdx + 9, replyIdx).trim() : '';
-    const reply = output.slice(replyIdx + 9, metaIdx).trim();
-    const meta = output.slice(metaIdx + 8).trim();
-    return { think, reply, meta };
+    return { reply: output.slice(0, metaIdx).trim(), meta: output.slice(metaIdx + 8).trim() };
+}
+
+// Reconstruct the assistant's message text from the CLI's JSONL (--output-format json): concatenate non-empty
+// `assistant.message` contents. Falls back to the raw output for plain-text (non-JSON) mode.
+function extractAssistantText(output: string): string {
+    const parts: string[] = [];
+    let sawJsonEvent = false;
+    for (const line of output.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed[0] !== '{') {
+            continue;
+        }
+        try {
+            const parsed: unknown = JSON.parse(trimmed);
+            if (parsed !== null && typeof parsed === 'object') {
+                sawJsonEvent = true;
+                const record = parsed as { type?: unknown; data?: unknown };
+                if (record.type === 'assistant.message' && record.data !== null && typeof record.data === 'object') {
+                    const content = (record.data as { content?: unknown }).content;
+                    if (typeof content === 'string' && content !== '') {
+                        parts.push(content);
+                    }
+                }
+            }
+        } catch {
+            /* not a JSON event line */
+        }
+    }
+    if (!sawJsonEvent) {
+        return output;
+    }
+    // In a multi-turn (tool-using) run the earlier messages are narration; the final reply is the last message
+    // (the one carrying [[META]] when present). Prefer that so narration never pollutes the parsed answer.
+    for (let i = parts.length - 1; i >= 0; i -= 1) {
+        if (parts[i].includes('[[META]]')) {
+            return parts[i];
+        }
+    }
+    return parts.length > 0 ? parts[parts.length - 1] : '';
 }
 
 function toOptions(raw: z.infer<typeof responseSchema>['options']): readonly DesignOption[] {
@@ -227,6 +258,51 @@ function toOptions(raw: z.infer<typeof responseSchema>['options']): readonly Des
         summary: option.summary,
         ...(option.recommended === true ? { recommended: true } : {})
     }));
+}
+
+/**
+ * Generate a concise chat title from the first user message with a quick, low-effort model call - separate
+ * from the main design turn, so a title can appear as soon as a conversation starts.
+ */
+export async function generateTitle(
+    ctx: DesignAgentContext,
+    firstMessage: string,
+    logger: Logger
+): Promise<string | undefined> {
+    const prompt = [
+        'Generate a concise title for a chat conversation that begins with the user message below.',
+        'Rules: at most 6 words, Title Case, describe the topic, no surrounding quotes, no trailing punctuation.',
+        'Reply with ONLY the title text and nothing else.',
+        '',
+        'USER MESSAGE:',
+        firstMessage.slice(0, 800)
+    ].join('\n');
+    try {
+        const result = await runCopilotReview({
+            cliPath: ctx.cliPath,
+            prompt,
+            model: ctx.model,
+            reasoningEffort: 'low',
+            cwd: ctx.repoRoot,
+            timeoutMs: Math.min(ctx.timeoutMs, 120_000)
+        });
+        if (result.status !== 0) {
+            return undefined;
+        }
+        const firstLine = (extractAssistantText(result.stdout).split('\n').find((line) => line.trim() !== '') ?? '').trim();
+        const cleaned = firstLine
+            .replace(/^["'`\s]+/, '')
+            .replace(/["'`\s]+$/, '')
+            .replace(/[.!?,;:]+$/, '')
+            .split(/\s+/)
+            .slice(0, 8)
+            .join(' ')
+            .slice(0, 70);
+        return cleaned !== '' ? cleaned : undefined;
+    } catch (error) {
+        logger.warn(`Design agent: title generation failed: ${describeError(error)}`);
+        return undefined;
+    }
 }
 
 /**
@@ -245,6 +321,7 @@ export async function runDesignTurn(
         result = await runCopilotReview({
             cliPath: ctx.cliPath,
             prompt,
+            outputFormat: 'json',
             model: ctx.model,
             reasoningEffort: ctx.reasoningEffort,
             cwd: ctx.repoRoot,
@@ -270,28 +347,27 @@ export async function runDesignTurn(
         };
     }
 
-    const sections = parseSections(result.stdout);
-    const metaSource = sections.meta !== '' ? sections.meta : result.stdout;
-    const jsonText = extractJson(metaSource);
+    const assistantText = extractAssistantText(result.stdout);
+    const parsedOutput = parseReplyMeta(assistantText);
+    const jsonText = parsedOutput.meta !== '' ? extractJson(parsedOutput.meta) : undefined;
     let meta: z.infer<typeof responseSchema> | undefined;
     if (jsonText !== undefined) {
         try {
-            const parsed = responseSchema.safeParse(JSON.parse(jsonText));
-            if (parsed.success) {
-                meta = parsed.data;
+            const parsedMeta = responseSchema.safeParse(JSON.parse(jsonText));
+            if (parsedMeta.success) {
+                meta = parsedMeta.data;
             }
         } catch {
-            /* fall through to the raw-text fallback */
+            /* keep the plain reply; metadata is optional */
         }
     }
-    let reply = sections.reply;
+    let reply = parsedOutput.reply;
     if (reply === '' && meta !== undefined && meta.reply !== null && meta.reply !== undefined) {
         reply = meta.reply;
     }
-    if (reply === '' && meta === undefined) {
-        const rawText = result.stdout.trim();
+    if (reply === '') {
         return {
-            reply: rawText === '' ? 'Sorry - I did not produce a usable response. Please try again.' : rawText,
+            reply: 'Sorry - I did not produce a usable response. Please try again.',
             options: [],
             askAudience: false
         };

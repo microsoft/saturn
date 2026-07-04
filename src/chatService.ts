@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { defaultReasoningEffort, fixTimeoutMs, primaryModel } from './config';
 import { ensureAdoMcpServer, resolveCopilotCli } from './copilot';
 import { ensureFeatureClone } from './git';
-import { type DesignAgentContext, runDesignTurn } from './designAgent';
+import { type DesignAgentContext, generateTitle, runDesignTurn } from './designAgent';
 import { type FeatureBuildContext, runFeatureBuild } from './featureBuild';
 import {
     addMessage,
@@ -86,6 +86,46 @@ function enqueueBuild(task: () => Promise<void>): void {
     buildChain = buildChain.then(task).catch((error: unknown) => {
         logger.warn(`Chat service: queued feature build threw: ${describeError(error)}`);
     });
+}
+
+/**
+ * Kick off a quick, separate title-generation call for a brand-new conversation (background). When a title
+ * comes back it is persisted and reported via onTitle - but only if the conversation still has the given
+ * provisional title, so a user rename or a later message's title is never clobbered.
+ */
+export function generateTitleAsync(
+    conversationId: string,
+    firstMessage: string,
+    provisional: string,
+    onTitle: (title: string) => void
+): void {
+    void (async () => {
+        try {
+            const env = await ensureBuildEnv();
+            if (env === undefined) {
+                return;
+            }
+            const ctx: DesignAgentContext = {
+                cliPath: env.cliPath,
+                model: primaryModel(),
+                reasoningEffort: 'low',
+                repoRoot: env.cloneDir,
+                timeoutMs: chatTimeoutMs(),
+                ...(env.allowMcpServerName !== undefined ? { allowMcpServerName: env.allowMcpServerName } : {})
+            };
+            const title = await generateTitle(ctx, firstMessage, logger);
+            if (title === undefined || title === '') {
+                return;
+            }
+            const conv = getConversation(conversationId);
+            if (conv !== undefined && conv.title === provisional) {
+                updateConversation(conversationId, { title });
+                onTitle(title);
+            }
+        } catch (error) {
+            logger.warn(`Chat service: async title generation failed: ${describeError(error)}`);
+        }
+    })();
 }
 
 // --- chat turns ------------------------------------------------------------------------------------------

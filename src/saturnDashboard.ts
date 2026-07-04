@@ -40,7 +40,7 @@ import {
   listMessages,
   updateConversation
 } from './chatStore';
-import { approveAndBuild, handleChatTurn } from './chatService';
+import { approveAndBuild, generateTitleAsync, handleChatTurn } from './chatService';
 import { buildHtmlDocument, buildTranscriptDocument, escapeHtml, renderMarkdownToSafeHtml } from './markdownRender';
 
 const PORT = DASHBOARD_PORT;
@@ -152,7 +152,7 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
     let body = '';
     req.on('data', (chunk) => {
       body += String(chunk);
-      if (body.length > 1_000_000) {
+      if (body.length > 4_000_000) {
         req.destroy();
       }
     });
@@ -2489,6 +2489,7 @@ const DASHBOARD_HTML = `<!doctype html>
               else if (ev === 'title') { if (data.title) { setConvos(function (p) { return p.map(function (c) { return c.id === convId ? Object.assign({}, c, { title: data.title }) : c; }); }); } }
               else if (ev === 'cot') { setCot(function (p) { var n = p.concat([data.text || '']); return n.length > 200 ? n.slice(n.length - 200) : n; }); }
               else if (ev === 'delta') { setCotOpen(false); setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
+              else if (ev === 'reset') { srRef.current = ''; setStreamReply(''); setCotOpen(true); }
               else if (ev === 'artifact') { if (data.artifact) { setArtifact(data.artifact); } }
               else if (ev === 'error') { srRef.current = srRef.current || ('Sorry - ' + (data.text || 'the agent failed.')); }
               else if (ev === 'done') { if (data.artifact) { setArtifact(data.artifact); } if (data.title) { setConvos(function (p) { return p.map(function (c) { return c.id === convId ? Object.assign({}, c, { title: data.title }) : c; }); }); } }
@@ -3842,7 +3843,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       sendJson(res, 400, { error: 'conversationId and message are required' });
       return;
     }
-    const result = await handleChatTurn(conversationId, message.slice(0, 20000));
+    const result = await handleChatTurn(conversationId, message.slice(0, 1_000_000));
     if (result === undefined) {
       sendJson(res, 404, { error: 'conversation not found' });
       return;
@@ -3885,57 +3886,161 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       }
     };
-    // Provisional title (instant): derived from the first message, shown immediately; refined by the AI on 'done'.
+    // Title: when the conversation has no real title yet, show an instant provisional title (first few words),
+    // persist it, then kick off a dedicated quick LLM call for a better one. Turns on an already-titled
+    // conversation never change the title.
     const startConv = getConversation(conversationId);
     if (startConv !== undefined && (startConv.title === 'New chat' || startConv.title.trim() === '')) {
       const provisional = message.trim().split(/\s+/).slice(0, 7).join(' ').slice(0, 60);
       if (provisional !== '') {
+        updateConversation(conversationId, { title: provisional });
         send('title', { title: provisional });
+        generateTitleAsync(conversationId, message, provisional, (title) => {
+          send('title', { title });
+        });
       }
     }
     send('status', { text: 'Researching the codebase' });
-    // The design agent emits [[THINK]] / [[REPLY]] / [[META]] sections. Route THINK lines to 'cot' (live
-    // chain-of-thought) and REPLY text to 'delta' (the streamed answer) as they arrive from the model.
-    let section = 'pre';
-    let lineBuf = '';
+    // The design agent runs the CLI with --output-format json --stream on, producing a JSONL event stream.
+    // Reasoning + tool + MCP events become live chain-of-thought ('cot'); assistant message deltas become the
+    // streamed reply ('delta'). Narration emitted before a tool call is moved to CoT and the reply is reset, so
+    // only the model's final message is shown as the answer - mirroring VS Code Copilot's activity-then-answer.
+    let jsonBuf = '';
+    let reasoningLine = '';
+    let replyAccum = '';
+    let emittedReplyLen = 0;
+    let metaSeen = false;
     let streamedReply = false;
     let lastActivity = Date.now();
-    const handleLine = (rawLine: string): void => {
-      const trimmed = rawLine.trim();
-      if (trimmed === '[[THINK]]') {
-        section = 'think';
+    const seenMcp = new Set<string>();
+    const asStr = (v: unknown): string => (typeof v === 'string' ? v : '');
+    const cot = (text: string): void => {
+      const t = text.trim();
+      if (t !== '') {
+        send('cot', { text: t.slice(0, 400) });
+        lastActivity = Date.now();
+      }
+    };
+    const flushReasoning = (): void => {
+      if (reasoningLine.trim() !== '') {
+        cot(reasoningLine);
+      }
+      reasoningLine = '';
+    };
+    // Emit reply text preceding [[META]] as 'delta'. Until the stream ends we hold back a short tail so a
+    // partially-arrived "[[META]]" marker is never shown to the user.
+    const pumpReply = (isFinal: boolean): void => {
+      if (metaSeen) {
         return;
       }
-      if (trimmed === '[[REPLY]]') {
-        section = 'reply';
-        return;
+      const metaIdx = replyAccum.indexOf('[[META]]');
+      let upTo = metaIdx >= 0 ? metaIdx : replyAccum.length;
+      if (metaIdx >= 0) {
+        metaSeen = true;
+      } else if (!isFinal) {
+        upTo = Math.max(emittedReplyLen, replyAccum.length - 8);
       }
-      if (trimmed === '[[META]]') {
-        section = 'meta';
-        return;
-      }
-      if (section === 'think') {
-        const line = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+$/, '');
-        if (line.trim() !== '') {
-          send('cot', { text: line.slice(0, 500) });
+      if (upTo > emittedReplyLen) {
+        const chunk = replyAccum.slice(emittedReplyLen, upTo);
+        emittedReplyLen = upTo;
+        if (chunk !== '') {
+          send('delta', { text: chunk });
+          streamedReply = true;
           lastActivity = Date.now();
         }
-      } else if (section === 'reply') {
-        send('delta', { text: `${rawLine}\n` });
-        streamedReply = true;
-        lastActivity = Date.now();
+      }
+    };
+    const friendlyTool = (name: string, args: unknown): string => {
+      const n = name.toLowerCase();
+      const a = isRecord(args) ? args : {};
+      const rawPath = asStr(a['path']) || asStr(a['filePath']) || asStr(a['file']) || asStr(a['query']);
+      const norm = rawPath.split('\\').join('/');
+      const base = norm.includes('/') ? norm.slice(norm.lastIndexOf('/') + 1) : norm;
+      if (n.includes('view') || n.includes('read') || n.includes('cat')) { return base !== '' ? `Reading ${base}` : 'Reading files'; }
+      if (n.includes('grep') || n.includes('search') || n.includes('find')) { return 'Searching the codebase'; }
+      if (n.includes('list') || n.includes('dir') || n.includes('glob')) { return base !== '' ? `Listing ${base}` : 'Listing files'; }
+      if (n.includes('bash') || n.includes('run') || n.includes('terminal') || n.includes('shell')) { return 'Running a command'; }
+      if (n.includes('edit') || n.includes('write') || n.includes('create') || n.includes('replace')) { return base !== '' ? `Editing ${base}` : 'Editing files'; }
+      if (n.includes('fetch') || n.includes('web')) { return 'Fetching a web page'; }
+      return `Using ${name !== '' ? name : 'a tool'}`;
+    };
+    const handleEventLine = (line: string): void => {
+      const trimmed = line.trim();
+      if (trimmed === '' || trimmed[0] !== '{') {
+        return;
+      }
+      let evt: unknown;
+      try {
+        evt = JSON.parse(trimmed);
+      } catch {
+        return;
+      }
+      if (!isRecord(evt)) {
+        return;
+      }
+      const type = asStr(evt['type']);
+      const data = isRecord(evt['data']) ? evt['data'] : {};
+      if (type === 'session.mcp_server_status_changed') {
+        const server = asStr(data['serverName']);
+        if (server !== '' && asStr(data['status']) === 'connected' && !seenMcp.has(server)) {
+          seenMcp.add(server);
+          cot(`Connected to ${server}`);
+        }
+        return;
+      }
+      if (type === 'assistant.reasoning_delta') {
+        reasoningLine += asStr(data['deltaContent']);
+        let nlAt = reasoningLine.indexOf('\n');
+        while (nlAt >= 0) {
+          cot(reasoningLine.slice(0, nlAt));
+          reasoningLine = reasoningLine.slice(nlAt + 1);
+          nlAt = reasoningLine.indexOf('\n');
+        }
+        if (reasoningLine.length > 180) {
+          const cut = reasoningLine.lastIndexOf(' ', 180);
+          const at = cut > 40 ? cut : 180;
+          cot(reasoningLine.slice(0, at));
+          reasoningLine = reasoningLine.slice(at);
+        }
+        return;
+      }
+      if (type === 'assistant.reasoning') {
+        flushReasoning();
+        return;
+      }
+      if (type === 'tool.execution_start') {
+        flushReasoning();
+        if (replyAccum.trim() !== '') {
+          const cutAt = replyAccum.indexOf('[[META]]');
+          cot(replyAccum.slice(0, cutAt < 0 ? replyAccum.length : cutAt));
+        }
+        if (streamedReply || emittedReplyLen > 0) {
+          send('reset', {});
+        }
+        replyAccum = '';
+        emittedReplyLen = 0;
+        metaSeen = false;
+        streamedReply = false;
+        cot(friendlyTool(asStr(data['toolName']), data['arguments']));
+        return;
+      }
+      if (type === 'assistant.message_delta') {
+        flushReasoning();
+        replyAccum += asStr(data['deltaContent']);
+        pumpReply(false);
+        return;
       }
     };
     const onProgress = (chunk: string): void => {
       if (closed) {
         return;
       }
-      lineBuf += chunk;
-      let nl = lineBuf.indexOf('\n');
+      jsonBuf += chunk;
+      let nl = jsonBuf.indexOf('\n');
       while (nl >= 0) {
-        handleLine(lineBuf.slice(0, nl));
-        lineBuf = lineBuf.slice(nl + 1);
-        nl = lineBuf.indexOf('\n');
+        handleEventLine(jsonBuf.slice(0, nl));
+        jsonBuf = jsonBuf.slice(nl + 1);
+        nl = jsonBuf.indexOf('\n');
       }
     };
     // Fallback status while the model researches silently (no output yet), so the panel is never blank.
@@ -3949,7 +4054,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     }, 3500);
     let result: Awaited<ReturnType<typeof handleChatTurn>>;
     try {
-      result = await handleChatTurn(conversationId, message.slice(0, 20000), onProgress);
+      result = await handleChatTurn(conversationId, message.slice(0, 1_000_000), onProgress);
     } catch {
       clearInterval(heartbeat);
       send('error', { text: 'The agent failed to respond. Please try again.' });
@@ -3962,12 +4067,13 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       res.end();
       return;
     }
-    // Flush any trailing reply text that had no closing newline.
-    if (section === 'reply' && lineBuf.trim() !== '') {
-      send('delta', { text: lineBuf });
-      streamedReply = true;
-      lineBuf = '';
+    // Process any leftover buffered event line, then flush remaining reasoning + the reply tail.
+    if (jsonBuf.trim() !== '') {
+      handleEventLine(jsonBuf);
+      jsonBuf = '';
     }
+    flushReasoning();
+    pumpReply(true);
     // Fallback: if the model didn't use the sectioned format, stream the parsed reply now in paced chunks.
     if (!streamedReply) {
       const assistantMessage = [...result.messages].reverse().find((m) => m.role === 'assistant');

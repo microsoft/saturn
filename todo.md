@@ -68,8 +68,12 @@ Pending work and known follow-ups. (Completed items are removed; see git history
 
 Shipped: a **React** Chat tab (self-hosted React 18 UMD) with a conversation list, a message thread, and an
 **on-demand, resizable** design-doc panel (opens only when you click to view a design doc; draggable
-splitters); **server-streamed** replies over SSE (live status while the agent researches, then the reply
-streamed in as it is produced) with a clear sending/typing indicator; **delete conversation**; an
+splitters); **server-streamed** replies over SSE with **live chain-of-thought** — the design agent runs the
+Copilot CLI in JSONL event mode (`--output-format json --stream on`), so the model's reasoning, MCP
+connections, and tool activity (reading / searching / editing files) stream into a **collapsible CoT panel**
+that folds into an accordion once the answer starts streaming token-by-token; a **dedicated quick-LLM call**
+generates the conversation title as soon as a chat starts (and never re-titles an already-titled chat); the
+prompt composer accepts up to **~1 MB**; **delete conversation**; an
 **intent-based** design agent (no PM/spec toggle — it infers whether the requester is technical and asks
 clarifying questions); **cross-session memory** (a new chat reuses relevant prior design docs); and the
 **feature-build pipeline** extending Code Autopilot from bugs to features (approved design → branch →
@@ -80,12 +84,19 @@ follow-ups (not done):
   template literal as inert (unused) code — only `chatEsc` + `loadFeatureBuilds` are still needed. Delete the
   rest. (Left in place deliberately: editing that large template-literal string is risky and a bad edit can
   silently break the whole dashboard script; remove it carefully with a browser smoke-test.)
-- **True token-level streaming.** Replies currently stream as paced chunks *after* the (headless, one-shot)
-  Copilot call returns; status heartbeats stream live during it. If the CLI ever exposes incremental stdout,
-  stream real tokens as the model produces them.
+- **True token-level streaming — shipped.** Replies now stream real tokens as the model produces them, and
+  reasoning + tool activity render as live chain-of-thought before the answer. Two follow-ups to watch: (a)
+  the CoT streams the model's **raw reasoning** verbatim, which can be verbose — consider summarizing or
+  rate-limiting reasoning lines; and (b) the narration-vs-answer split relies on a heuristic (text streamed
+  before a `tool.execution_start` is treated as narration and reset), so an answer interleaved with a final
+  tool call could be briefly reset — the authoritative parsed reply on `done` still corrects it.
+- **Dedicated title call cost.** New conversations now fire a **separate** low-effort Copilot call just for the
+  title (so it appears immediately, decoupled from the main turn). That is an extra CLI invocation per new
+  chat; revisit if cost/latency matters (e.g. derive the title from the main turn's first tokens instead).
 - **Automated tests.** `chatStore`, `designAgent`, `featureBuild`, `chatService`, `markdownRender`, and the
-  SSE stream endpoint have no unit tests yet — add coverage (store round-trips, JSON-parse fallbacks, the
-  safe-markdown renderer, option-selection, the twice-validate gate, SSE framing).
+  SSE stream endpoint (incl. the new **JSONL CoT parser** + `[[META]]` hold-back) have no unit tests yet — add
+  coverage (store round-trips, JSON-parse fallbacks, the safe-markdown renderer, option-selection, the
+  twice-validate gate, SSE framing, and event→CoT/delta mapping).
 - **Feature-build PR monitoring.** Unlike the bug-fix loop, a feature build opens the PR and stops; it does not
   address review/build feedback or clean up the branch afterward. Add monitoring (reuse the fix monitor) or an
   explicit "address feedback" action from chat.

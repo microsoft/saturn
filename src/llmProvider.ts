@@ -7,30 +7,30 @@
 
 /** A selectable LLM provider. */
 export interface ProviderInfo {
-  readonly id: string;
-  readonly name: string;
-  /** Whether the provider needs an API key/endpoint (Copilot CLI does not - it uses the CLI's own auth). */
-  readonly needsApiKey: boolean;
+    readonly id: string;
+    readonly name: string;
+    /** Whether the provider needs an API key/endpoint (Copilot CLI does not - it uses the CLI's own auth). */
+    readonly needsApiKey: boolean;
 }
 
 /** The models a provider offers, plus the recommended default. */
 export interface ModelList {
-  readonly models: readonly string[];
-  readonly defaultModel: string;
-  /** When true, the UI also lets the user type a custom model id the provider accepts. */
-  readonly allowCustom: boolean;
+    readonly models: readonly string[];
+    readonly defaultModel: string;
+    /** When true, the UI also lets the user type a custom model id the provider accepts. */
+    readonly allowCustom: boolean;
 }
 
 /** A model's tunable capabilities, as reported by the provider. */
 export interface ModelCapabilities {
-  /** Reasoning-effort levels, lowest-to-highest. */
-  readonly effortLevels: readonly string[];
-  /** Recommended default effort (the highest, per the requirement). */
-  readonly defaultEffort: string;
-  /** Selectable context-window sizes (tokens), or null when the provider uses the model's inherent window. */
-  readonly contextSizes: readonly number[] | null;
-  /** Recommended default context size (the highest), or null when not selectable. */
-  readonly defaultContextSize: number | null;
+    /** Reasoning-effort levels, lowest-to-highest. */
+    readonly effortLevels: readonly string[];
+    /** Recommended default effort (the highest, per the requirement). */
+    readonly defaultEffort: string;
+    /** Selectable context-window sizes (tokens), or null when the provider uses the model's inherent window. */
+    readonly contextSizes: readonly number[] | null;
+    /** Recommended default context size (the highest), or null when not selectable. */
+    readonly defaultContextSize: number | null;
 }
 
 const COPILOT_PROVIDER_ID = 'copilot';
@@ -46,20 +46,20 @@ const COPILOT_DEFAULT_MODEL = 'claude-opus-4.8';
 
 /** The providers the installer can offer right now. */
 export function listProviders(): readonly ProviderInfo[] {
-  return [{ id: COPILOT_PROVIDER_ID, name: 'GitHub Copilot CLI', needsApiKey: false }];
+    return [{ id: COPILOT_PROVIDER_ID, name: 'GitHub Copilot CLI', needsApiKey: false }];
 }
 
 /** True when the given id is a known/supported provider. */
 export function isKnownProvider(providerId: string): boolean {
-  return listProviders().some((provider) => provider.id === providerId);
+    return listProviders().some((provider) => provider.id === providerId);
 }
 
 /** The models a provider offers (queried where the provider supports it; a validated list for Copilot). */
 export function listModels(providerId: string): ModelList {
-  if (providerId === COPILOT_PROVIDER_ID) {
-    return { models: COPILOT_MODELS, defaultModel: COPILOT_DEFAULT_MODEL, allowCustom: true };
-  }
-  return { models: [], defaultModel: '', allowCustom: true };
+    if (providerId === COPILOT_PROVIDER_ID) {
+        return { models: COPILOT_MODELS, defaultModel: COPILOT_DEFAULT_MODEL, allowCustom: true };
+    }
+    return { models: [], defaultModel: '', allowCustom: true };
 }
 
 /**
@@ -67,14 +67,14 @@ export function listModels(providerId: string): ModelList {
  * not expose a context-window setting (each model uses its inherent window), so contextSizes is null there.
  */
 export function modelCapabilities(providerId: string, model: string): ModelCapabilities {
-  void model; // reserved for future per-model capability differences (context sizes, etc.)
-  if (providerId === COPILOT_PROVIDER_ID) {
-    return {
-      effortLevels: COPILOT_EFFORT_LEVELS,
-      defaultEffort: COPILOT_EFFORT_LEVELS[COPILOT_EFFORT_LEVELS.length - 1] ?? 'max',
-      contextSizes: null,
-      defaultContextSize: null
-    };
-  }
-  return { effortLevels: ['default'], defaultEffort: 'default', contextSizes: null, defaultContextSize: null };
+    void model; // reserved for future per-model capability differences (context sizes, etc.)
+    if (providerId === COPILOT_PROVIDER_ID) {
+        return {
+            effortLevels: COPILOT_EFFORT_LEVELS,
+            defaultEffort: COPILOT_EFFORT_LEVELS[COPILOT_EFFORT_LEVELS.length - 1] ?? 'max',
+            contextSizes: null,
+            defaultContextSize: null
+        };
+    }
+    return { effortLevels: ['default'], defaultEffort: 'default', contextSizes: null, defaultContextSize: null };
 }
