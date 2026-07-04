@@ -220,6 +220,63 @@ export async function ensureFixClone(logger: Logger): Promise<string> {
   return targetDir;
 }
 
+/**
+ * Default location for the feature-build / chat-research clone. Kept SEPARATE from the bug-fix clone so a
+ * feature build (which branches + edits) never collides with the standalone Code Autopilot fix loop running
+ * in its own process against the fix clone. Override SATURN_FEATURE_CLONE_DIR.
+ */
+export function defaultFeatureCloneDir(): string {
+  const override = process.env.SATURN_FEATURE_CLONE_DIR;
+  if (override !== undefined && override.trim() !== '') {
+    return override.trim();
+  }
+  const base =
+    process.platform === 'win32'
+      ? path.join('C:\\', 'saturn', 'feature-repo')
+      : path.join(os.homedir(), 'saturn', 'feature-repo');
+  return path.join(base, AZURE_DEVOPS_CONFIG.repositoryName);
+}
+
+/**
+ * Ensure the dedicated feature/chat clone exists and its default branch is current. Mirrors ensureFixClone
+ * but at a separate path (defaultFeatureCloneDir) so feature builds never disturb the bug-fix clone.
+ */
+export async function ensureFeatureClone(logger: Logger): Promise<string> {
+  const targetDir = defaultFeatureCloneDir();
+  const env = nonInteractiveGitEnv();
+  if (existsSync(path.join(targetDir, '.git'))) {
+    await runCommandAsync('git', ['-C', targetDir, 'checkout', AZURE_DEVOPS_CONFIG.defaultBranch], {
+      env,
+      timeoutMs: 120_000
+    });
+    await updateRepoFromMaster(targetDir, logger);
+    return targetDir;
+  }
+  logger.info(`Saturn feature build: cloning ${AZURE_DEVOPS_CONFIG.repositoryName} (shallow) into ${targetDir}...`);
+  mkdirSync(path.dirname(targetDir), { recursive: true });
+  const result = await runCommandAsync(
+    'git',
+    [
+      'clone',
+      '--depth',
+      '1',
+      '--single-branch',
+      '--branch',
+      AZURE_DEVOPS_CONFIG.defaultBranch,
+      repoCloneUrl(),
+      targetDir
+    ],
+    { env, timeoutMs: 1_800_000 }
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `Failed to clone ${AZURE_DEVOPS_CONFIG.repositoryName} into ${targetDir}: ${result.stderr.trim() || 'unknown error'}`
+    );
+  }
+  logger.info('Saturn feature build: clone complete.');
+  return targetDir;
+}
+
 /** Discard working-tree changes + return the clone to a clean, up-to-date default branch. */
 export async function resetFixCloneToDefault(repoRoot: string, logger: Logger): Promise<void> {
   const env = nonInteractiveGitEnv();

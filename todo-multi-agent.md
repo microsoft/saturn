@@ -3,25 +3,6 @@
 > Status: **design / feasibility** — not yet implemented. Captures the plan to extend Code Autopilot from
 > single-repo autonomous bug-fixing to multi-repo coordination and cross-repo feature implementation.
 
-## What this delivers (plain language, for leadership)
-
-Saturn is already an always-on AI engineering agent that reviews every pull request, continuously audits the
-entire codebase for security, privacy, and quality issues, and — through Code Autopilot — automatically turns
-those issues into ready-to-merge fixes, with a person needed only to approve and merge. This initiative
-extends that same proven capability from a single repository to **many repositories working together**, and
-from one-off bug fixes to **delivering whole features that span several repositories at once**. Given a
-feature's design document, the agents assigned to each repository will automatically agree on the shared
-interfaces between them, build their part in parallel, generate and run the tests that prove the change is
-correct, and open linked pull requests — all **without a person writing the code or manually coordinating the
-teams involved**. The only required human step is the final review and approval; nothing merges itself.
-
-In practice this removes the slowest parts of shipping a feature — cross-team coordination, agreeing on
-interfaces, and the manual hand-offs between repositories — by having the agents perform that negotiation
-themselves, around the clock and many changes at a time. The result is feature delivery that is dramatically
-faster and far less labor-intensive, while quality stays protected by automated tests as the correctness
-check and a mandatory human review gate. Engineers shift from writing and coordinating code to **setting
-direction and approving outcomes** — letting the organization ship more, sooner, without adding headcount.
-
 ## Goals
 
 1. **Support multiple repositories.**

@@ -64,3 +64,35 @@ Pending work and known follow-ups. (Completed items are removed; see git history
 - **Raise the open-PR cap after verification.** Currently pinned to **4** (`SATURN_FIX_MAX_OPEN_PRS=4`) while
   the agent is being verified and not yet released. Increase once its PRs are trusted.
 
+## Chat + conversational design / feature-building agent — follow-ups
+
+The Chat tab shipped: a ChatGPT-style UI (conversation list + thread + design-doc preview), a read-only
+conversational **design agent** (feasibility verdict + options + a markdown design doc with mermaid diagrams,
+plus a plain-language path for PMs/non-devs), **cross-session memory** (a new chat reuses relevant prior design
+docs), and a **feature-build pipeline** that extends Code Autopilot from bug-fixing to features (approved
+design → new branch → implement → **self-validate twice** → lint → PR, surfaced in chat + on the Code Autopilot
+tab). Remaining follow-ups (not done):
+
+- **Automated tests.** `chatStore`, `designAgent`, `featureBuild`, `chatService`, and `markdownRender` have no
+  unit tests yet — add coverage (store round-trips, JSON-parse fallbacks, the safe-markdown renderer, the
+  option-selection rule, the twice-validate gate).
+- **Streaming / non-blocking turns.** A chat turn is one long synchronous request (the model call can take
+  minutes) — risks tunnel/proxy timeouts. Move to an async turn (kick off + poll, or SSE token streaming) like
+  the feature build already does.
+- **Feature-build PR monitoring.** Unlike the bug-fix loop, a feature build opens the PR and stops; it does not
+  address review/build feedback or clean up the branch afterward. Add monitoring (reuse the fix monitor) or an
+  explicit "address feedback" action from chat.
+- **Build-trigger authorization.** Approve-&-build is currently open to every (Microsoft-authenticated) viewer,
+  with the requester recorded. Once EasyAuth lands, decide whether to gate builds to the owner/devs.
+- **Richer cross-session memory.** Retrieval is keyword/`LIKE`-based over artifact title+body; consider FTS5 or
+  embeddings for better recall, and include prior chat messages (not just design docs).
+- **Chat store retention.** `chat.db` (conversations/messages/artifacts/feature_builds) grows unbounded — add a
+  retention/prune policy like the audit store needs.
+- **Explicit audience choice + interactive options.** The PM/non-dev "technical vs plain-language" decision and
+  the multi-option selection are handled conversationally (heuristic + chat message); make them explicit UI
+  buttons in the thread for reliability.
+- **Downloaded-HTML size.** Offline HTML downloads inline the full mermaid bundle (~3.4 MB) so diagrams render
+  without a network; revisit if a lighter self-contained diagram option becomes available.
+- **Dependency audit.** Adding `mermaid` introduced one moderate `npm audit` advisory (transitive) — review and
+  resolve or document it.
+

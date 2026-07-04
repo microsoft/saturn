@@ -100,6 +100,34 @@ if (sourceChartJs) {
   );
 }
 
+// Copy the mermaid UMD bundle next to the deployed bundle so the dashboard serves it from
+// /vendor/mermaid.min.js (self-hosted, no external CDN) for the Chat tab's design-doc diagrams.
+function findMermaidUmd(startDir) {
+  let dir = startDir;
+  for (let depth = 0; depth < 8; depth += 1) {
+    const candidate = path.join(dir, "node_modules", "mermaid", "dist", "mermaid.min.js");
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  return undefined;
+}
+const sourceMermaid = findMermaidUmd(packageRoot);
+const deployedMermaid = path.join(deployDir, "mermaid.min.js");
+if (sourceMermaid) {
+  copyFileSync(sourceMermaid, deployedMermaid);
+  console.log(`  bundled mermaid.min.js (mermaid npm) -> ${deployedMermaid}`);
+} else {
+  console.warn(
+    "  WARNING: mermaid not found in node_modules - Chat design-doc diagrams will fall back to the CDN.",
+  );
+}
+
 // Copy the docs folder + README next to the bundle so the dashboard's Documentation tab can read them at runtime.
 const sourceDocsDir = path.join(packageRoot, "docs");
 const deployedDocsDir = path.join(deployDir, "docs");
