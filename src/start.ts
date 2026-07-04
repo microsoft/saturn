@@ -2,6 +2,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 import { CLI_HELP_TEXT, parseCliOptions } from './cli';
+import { isSaturnConfigured } from './config';
 import { runSaturn } from './runSaturn';
 import { consoleLogger, describeError } from './util';
 
@@ -9,6 +10,13 @@ async function main(): Promise<void> {
   const options = parseCliOptions(process.argv.slice(2));
   if (options === undefined) {
     consoleLogger.info(CLI_HELP_TEXT);
+    return;
+  }
+
+  if (!isSaturnConfigured()) {
+    consoleLogger.error(
+      'Saturn is not configured yet. Open the dashboard and complete setup (repository + model) first.'
+    );
     return;
   }
 

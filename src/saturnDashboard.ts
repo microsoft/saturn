@@ -2,6 +2,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
@@ -14,9 +15,13 @@ import {
   defaultReasoningEffort,
   getReviewAllowlist,
   isFeedbackEnabled,
+  isSaturnConfigured,
+  parseRepoUrl,
   setReviewAllowlist,
-  webhookSecret
+  webhookSecret,
+  writeSaturnConfig
 } from './config';
+import { isKnownProvider, listModels, listProviders, modelCapabilities } from './llmProvider';
 import { getModelStatus } from './copilot';
 import { createSaturnService, type SaturnService, type SaturnServiceConfig } from './saturnService';
 import { areaOwnerEntriesFromBody } from './areaOwners';
@@ -3258,6 +3263,102 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
   const pathname = url.split('?')[0];
   const method = req.method ?? 'GET';
 
+  // --- Setup / installer: available before Saturn is configured, and for reconfiguring later at /setup. ---
+  if (method === 'GET' && pathname === '/api/setup/state') {
+    sendJson(res, 200, {
+      configured: isSaturnConfigured(),
+      providers: listProviders(),
+      config: {
+        repoUrl: process.env.SATURN_REPO_URL ?? '',
+        defaultBranch: process.env.SATURN_ADO_DEFAULT_BRANCH ?? 'main',
+        provider: process.env.SATURN_PROVIDER ?? 'copilot',
+        model: process.env.SATURN_MODEL ?? '',
+        effort: process.env.SATURN_REASONING_EFFORT ?? '',
+        contextSize: process.env.SATURN_CONTEXT_SIZE ?? ''
+      }
+    });
+    return;
+  }
+  if (method === 'GET' && pathname === '/api/setup/models') {
+    const provider = new URL(url, 'http://localhost').searchParams.get('provider') ?? 'copilot';
+    sendJson(res, 200, listModels(provider));
+    return;
+  }
+  if (method === 'GET' && pathname === '/api/setup/capabilities') {
+    const params = new URL(url, 'http://localhost').searchParams;
+    sendJson(res, 200, modelCapabilities(params.get('provider') ?? 'copilot', params.get('model') ?? ''));
+    return;
+  }
+  if (method === 'POST' && pathname === '/api/setup/save') {
+    const raw = await readRequestBody(req);
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
+      if (isRecord(parsed)) {
+        body = parsed;
+      }
+    } catch {
+      sendJson(res, 400, { ok: false, error: 'invalid payload' });
+      return;
+    }
+    const repoUrl = typeof body['repoUrl'] === 'string' ? body['repoUrl'].trim() : '';
+    if (repoUrl === '' || parseRepoUrl(repoUrl) === undefined) {
+      sendJson(res, 400, {
+        ok: false,
+        error: 'Enter a valid Azure DevOps repo URL, e.g. https://dev.azure.com/org/project/_git/repo'
+      });
+      return;
+    }
+    const provider =
+      typeof body['provider'] === 'string' && isKnownProvider(body['provider']) ? body['provider'] : 'copilot';
+    const models = listModels(provider);
+    const model =
+      typeof body['model'] === 'string' && body['model'].trim() !== '' ? body['model'].trim() : models.defaultModel;
+    const caps = modelCapabilities(provider, model);
+    const effort =
+      typeof body['effort'] === 'string' && caps.effortLevels.includes(body['effort'])
+        ? body['effort']
+        : caps.defaultEffort;
+    const defaultBranch =
+      typeof body['defaultBranch'] === 'string' && body['defaultBranch'].trim() !== ''
+        ? body['defaultBranch'].trim()
+        : 'main';
+    const contextSize = typeof body['contextSize'] === 'string' ? body['contextSize'].trim() : '';
+    try {
+      writeSaturnConfig({
+        SATURN_REPO_URL: repoUrl,
+        SATURN_ADO_DEFAULT_BRANCH: defaultBranch,
+        SATURN_PROVIDER: provider,
+        SATURN_MODEL: model,
+        SATURN_REASONING_EFFORT: effort,
+        SATURN_CONTEXT_SIZE: contextSize
+      });
+    } catch {
+      sendJson(res, 500, { ok: false, error: 'Could not save the configuration file.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, restarting: true });
+    scheduleRestart();
+    return;
+  }
+  if (pathname === '/setup') {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(SETUP_HTML);
+    return;
+  }
+  if (!isSaturnConfigured()) {
+    // Setup mode: serve the installer for page loads; refuse non-setup APIs until a repo is configured.
+    if (method === 'GET' && (pathname === '/' || pathname === '/index.html')) {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(SETUP_HTML);
+      return;
+    }
+    if (pathname.startsWith('/api/')) {
+      sendJson(res, 503, { error: 'Saturn is not configured yet. Open the dashboard to run setup.' });
+      return;
+    }
+  }
+
   if (method === 'POST' && pathname === '/api/hooks/ado') {
     // Azure DevOps service-hook receiver: validates a shared secret (constant-time), then signals Code
     // Autopilot to run an iteration immediately so it reacts to a build failure / new comment without waiting
@@ -4023,7 +4124,158 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
   sendJson(res, 404, { error: 'not found' });
 }
 
+// Re-launch the dashboard so freshly-saved configuration (the repo coordinates are read once at startup) takes
+// effect. Spawns a detached copy of this process and exits; the new process retries the port until released.
+function scheduleRestart(): void {
+  setTimeout(() => {
+    try {
+      const script = process.argv[1];
+      if (script !== undefined) {
+        const child = spawn(process.execPath, [script], {
+          detached: true,
+          stdio: 'ignore',
+          env: process.env,
+          windowsHide: true
+        });
+        child.unref();
+      }
+    } catch {
+      /* best-effort restart */
+    }
+    process.exit(0);
+  }, 600);
+}
+
+// The first-run / reconfigure installer page (served at '/' when unconfigured, and always at '/setup').
+const SETUP_HTML = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Saturn - Setup</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:'Segoe UI',system-ui,sans-serif; background:#0b1020; color:#e6e9f0; }
+  .wrap { max-width:640px; margin:44px auto; padding:0 24px; }
+  .brand { display:flex; align-items:center; gap:12px; margin-bottom:6px; }
+  .mark { width:34px; height:34px; border-radius:9px; background:linear-gradient(135deg,#3168ff,#2545d6); display:flex; align-items:center; justify-content:center; font-weight:700; }
+  h1 { font-size:22px; letter-spacing:2px; margin:0; }
+  .sub { color:#8b93b5; font-size:14px; margin:6px 0 24px; }
+  .card { background:#121a36; border:1px solid #232a44; border-radius:12px; padding:22px; }
+  label { display:block; font-size:13px; color:#b7bfd8; margin:16px 0 6px; }
+  label.first { margin-top:0; }
+  input, select { width:100%; background:#0d1430; color:#e6e9f0; border:1px solid #2a3350; border-radius:8px; padding:10px 12px; font:inherit; }
+  input:focus, select:focus { outline:none; border-color:#3168ff; }
+  .hint { font-size:12px; color:#6b7590; margin-top:5px; }
+  .row { display:flex; gap:12px; } .row > div { flex:1; }
+  .actions { margin-top:24px; display:flex; align-items:center; gap:14px; }
+  button.save { background:#2952e3; color:#fff; border:0; border-radius:8px; padding:11px 22px; font-size:14px; cursor:pointer; }
+  button.save:disabled { opacity:.5; cursor:default; }
+  .status { font-size:13px; } .status.err { color:#ff7a8a; } .status.ok { color:#5ee08a; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="mark">S</span><h1>SATURN</h1></div>
+  <div class="sub">Setup - point Saturn at a repository and choose the model.</div>
+  <div class="card">
+    <label class="first" for="repoUrl">Azure DevOps repository URL</label>
+    <input id="repoUrl" type="text" placeholder="https://dev.azure.com/org/project/_git/repo" />
+    <div class="hint">The repository Saturn will review, audit, and build for.</div>
+    <label for="branch">Default branch</label>
+    <input id="branch" type="text" value="main" />
+    <label for="provider">LLM provider</label>
+    <select id="provider"></select>
+    <label for="model">Model</label>
+    <select id="model"></select>
+    <input id="modelCustom" class="hidden" type="text" placeholder="custom model id" style="margin-top:8px" />
+    <div class="row">
+      <div>
+        <label for="effort">Thinking effort</label>
+        <select id="effort"></select>
+      </div>
+      <div>
+        <label for="context">Context size</label>
+        <select id="context"></select>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="save" class="save" type="button">Save &amp; start</button>
+      <span id="status" class="status"></span>
+    </div>
+  </div>
+</div>
+<script>
+  var $ = function (id) { return document.getElementById(id); };
+  var cfg = {};
+  function opt(sel, value, label, selected) { var o = document.createElement('option'); o.value = value; o.textContent = label; if (selected) { o.selected = true; } sel.appendChild(o); }
+  function j(url) { return fetch(url).then(function (r) { return r.json(); }); }
+  function loadState() {
+    j('/api/setup/state').then(function (s) {
+      cfg = s.config || {};
+      var p = $('provider'); p.innerHTML = '';
+      (s.providers || []).forEach(function (pr) { opt(p, pr.id, pr.name, pr.id === (cfg.provider || 'copilot')); });
+      if (cfg.repoUrl) { $('repoUrl').value = cfg.repoUrl; }
+      if (cfg.defaultBranch) { $('branch').value = cfg.defaultBranch; }
+      loadModels();
+    });
+  }
+  function loadModels() {
+    var provider = $('provider').value;
+    j('/api/setup/models?provider=' + encodeURIComponent(provider)).then(function (m) {
+      var sel = $('model'); sel.innerHTML = '';
+      var current = cfg.model || m.defaultModel;
+      (m.models || []).forEach(function (mo) { opt(sel, mo, mo, mo === current); });
+      if (m.allowCustom) { opt(sel, '__custom__', 'Custom...', false); }
+      if (current && (m.models || []).indexOf(current) < 0 && m.allowCustom) { sel.value = '__custom__'; $('modelCustom').value = current; }
+      onModelChange();
+    });
+  }
+  function currentModel() { return $('model').value === '__custom__' ? $('modelCustom').value.trim() : $('model').value; }
+  function onModelChange() { $('modelCustom').className = $('model').value === '__custom__' ? '' : 'hidden'; loadCaps(); }
+  function loadCaps() {
+    var provider = $('provider').value; var model = currentModel();
+    j('/api/setup/capabilities?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model)).then(function (c) {
+      var eff = $('effort'); eff.innerHTML = ''; var curEff = cfg.effort || c.defaultEffort;
+      (c.effortLevels || []).forEach(function (e) { opt(eff, e, e, e === curEff); });
+      var ctx = $('context'); ctx.innerHTML = '';
+      if (!c.contextSizes) { opt(ctx, '', 'Model default', true); ctx.disabled = true; }
+      else {
+        ctx.disabled = false;
+        var curCtx = cfg.contextSize || (c.defaultContextSize != null ? String(c.defaultContextSize) : '');
+        c.contextSizes.forEach(function (n) { opt(ctx, String(n), String(n) + ' tokens', String(n) === curCtx); });
+      }
+    });
+  }
+  function save() {
+    var st = $('status'); st.className = 'status'; st.textContent = 'Saving...'; $('save').disabled = true;
+    var payload = { repoUrl: $('repoUrl').value.trim(), defaultBranch: $('branch').value.trim(), provider: $('provider').value, model: currentModel(), effort: $('effort').value, contextSize: $('context').disabled ? '' : $('context').value };
+    fetch('/api/setup/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+      .then(function (res) {
+        if (!res.ok || !res.d.ok) { st.className = 'status err'; st.textContent = (res.d && res.d.error) || 'Save failed.'; $('save').disabled = false; return; }
+        st.className = 'status ok'; st.textContent = 'Saved. Starting Saturn...'; pollReady(0);
+      })
+      .catch(function () { st.className = 'status err'; st.textContent = 'Save failed.'; $('save').disabled = false; });
+  }
+  function pollReady(n) {
+    if (n > 45) { location.href = '/'; return; }
+    setTimeout(function () {
+      j('/api/setup/state').then(function (s) { if (s.configured) { location.href = '/'; } else { pollReady(n + 1); } }).catch(function () { pollReady(n + 1); });
+    }, 1000);
+  }
+  $('provider').onchange = loadModels;
+  $('model').onchange = onModelChange;
+  $('save').onclick = save;
+  loadState();
+</script>
+</body>
+</html>`;
+
 function main(): void {
+  const configured = isSaturnConfigured();
   const service = createSaturnService(buildConfig(), consoleLogger);
   const server = createServer((req, res) => {
     handleRequest(service, req, res).catch(() => {
@@ -4046,8 +4298,21 @@ function main(): void {
       }
     }
   }, 1000);
+  // Retry the port briefly so a save-triggered restart can rebind once the previous process releases it.
+  let listenAttempts = 0;
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    if (error.code === 'EADDRINUSE' && listenAttempts < 30) {
+      listenAttempts += 1;
+      setTimeout(() => server.listen(PORT), 500);
+    } else {
+      consoleLogger.error(`Saturn dashboard failed to bind port ${String(PORT)}: ${error.message}`);
+    }
+  });
   server.listen(PORT, () => {
     consoleLogger.info(`Saturn dashboard running at http://localhost:${String(PORT)}`);
+    if (!configured) {
+      consoleLogger.info('Saturn is NOT configured yet - open the dashboard to run the setup installer.');
+    }
     consoleLogger.info('Open it to start/stop the agent and watch reviews live.');
   });
 }

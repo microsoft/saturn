@@ -102,3 +102,30 @@ follow-ups (not done):
 - **Textarea polish.** The composer is a fixed 2-row textarea (Enter sends, Shift+Enter newlines); add
   auto-grow up to a max height for longer prompts.
 
+## Setup installer & multi-repo
+
+Shipped (single-repo): a **web setup installer** — when Saturn is unconfigured the dashboard serves a Setup
+page (and `/setup` is always available to reconfigure). It configures the **Azure DevOps repo URL + default
+branch**, an **LLM provider** (pluggable; GitHub Copilot CLI today via `llmProvider.ts`), the **model**
+(provider list + custom entry), and **thinking effort** (Copilot: none…max, defaults to the highest). Context
+size shows **"Model default"** for Copilot (the CLI has no context-window control) and is ready to become a
+real dropdown for API providers. Save writes a persisted config (`~/.saturn/saturn.config.json` via
+`writeSaturnConfig`), then the process re-execs so the new repo coordinates take effect. `config.ts` no longer
+throws when unconfigured (`isSaturnConfigured()`), and the review/autopilot entrypoints exit with a clear
+message until setup is done. A `SATURN_HOME` instance-root helper (`saturnHome()`) was added as the isolation
+foundation.
+
+Not done — **multi-repo** (deferred, to be discussed):
+
+- **Route ALL data dirs through `saturnHome()`.** Today `fixStore`/`chatStore`/`auditStore`/review dirs still
+  use `~/.saturn/<area>` and clones use `C:\saturn\fix-repo|feature-repo`. For true per-repo isolation every
+  store, clone, working dir, and memory path must derive from `saturnHome()` so `SATURN_HOME=<instance>` fully
+  separates an instance (own DBs, files, memory, working dirs, config). **Nothing shared.**
+- **Per-repo processes + supervisor.** Each repo runs as its own set of processes (dashboard/review/audit/
+  autopilot) with its own `SATURN_HOME`, `SATURN_CONFIG_FILE`, and `SATURN_PORT`. Add a supervisor to
+  spawn/monitor/stop instances and a per-instance port allocation.
+- **"Add repository" UI.** A settings menu in the dashboard to register another repo (local or on a remote
+  host) and launch its instance; an aggregated multi-repo view.
+- **Provider expansion.** Real OpenAI / Anthropic / Azure OpenAI providers (API keys, live model listing, and
+  selectable context sizes) behind the existing `llmProvider` interface.
+

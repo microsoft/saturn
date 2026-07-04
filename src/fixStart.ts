@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
-import { defaultReasoningEffort, fixTimeoutMs, primaryModel } from './config';
+import { defaultReasoningEffort, fixTimeoutMs, isSaturnConfigured, primaryModel } from './config';
 import { runFixLoop } from './fixService';
 import { consoleLogger, describeError } from './util';
 
@@ -34,6 +34,12 @@ Key environment variables (all optional):
 async function main(): Promise<void> {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
     consoleLogger.info(HELP);
+    return;
+  }
+  if (!isSaturnConfigured()) {
+    consoleLogger.error(
+      'Saturn is not configured yet. Open the dashboard and complete setup (repository + model) first.'
+    );
     return;
   }
   const model =

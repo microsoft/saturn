@@ -77,16 +77,61 @@ function loadEnvFile(): void {
 
 loadEnvFile();
 
-/** Read a required configuration value from the environment, throwing a clear error if it is missing. */
-function requireEnv(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value.trim() === '') {
-    throw new Error(
-      `Saturn configuration error: ${name} is not set. Copy .env.example to .env and fill in the Azure DevOps coordinates of the repository to review.`
-    );
-  }
-  return value.trim();
+/**
+ * Root directory for this Saturn instance's data (config, DBs, clones, memory). Override with SATURN_HOME so
+ * a second repository can run as a fully isolated instance - its own DBs, files, working dirs, and config.
+ */
+export function saturnHome(): string {
+  const override = (process.env.SATURN_HOME ?? '').trim();
+  return override !== '' ? override : join(os.homedir(), '.saturn');
 }
+
+/** Path to the persisted setup config the web installer writes (env-style keys stored as JSON). */
+export function saturnConfigPath(): string {
+  const override = (process.env.SATURN_CONFIG_FILE ?? '').trim();
+  return override !== '' ? override : join(saturnHome(), 'saturn.config.json');
+}
+
+/** Read the persisted setup config as a flat string map (empty when none exists or is unreadable). */
+export function readSaturnConfig(): Record<string, string> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(saturnConfigPath(), 'utf8'));
+    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const result: Record<string, string> = {};
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === 'string') {
+          result[key] = value;
+        }
+      }
+      return result;
+    }
+  } catch {
+    /* no config yet / unreadable */
+  }
+  return {};
+}
+
+/** Merge + persist setup config values (env-style keys), and apply them to process.env for this process. */
+export function writeSaturnConfig(values: Record<string, string>): void {
+  const merged = { ...readSaturnConfig(), ...values };
+  const target = saturnConfigPath();
+  mkdirSync(dirname(target), { recursive: true });
+  writeFileSync(target, `${JSON.stringify(merged, null, 2)}\n`, 'utf8');
+  for (const [key, value] of Object.entries(values)) {
+    process.env[key] = value;
+  }
+}
+
+// Load the persisted setup config into process.env (real env + .env still take precedence, like loadEnvFile).
+function loadSaturnConfigFile(): void {
+  for (const [key, value] of Object.entries(readSaturnConfig())) {
+    const existing = process.env[key];
+    if (existing === undefined || existing.trim() === '') {
+      process.env[key] = value;
+    }
+  }
+}
+loadSaturnConfigFile();
 
 /** Read an optional configuration value from the environment, falling back to a default. */
 function envOrDefault(name: string, fallback: string): string {
@@ -136,9 +181,9 @@ if (repoUrl !== '' && parsedRepo === undefined) {
     `Saturn configuration error: SATURN_REPO_URL ("${repoUrl}") is not a recognizable Azure DevOps repo URL (expected .../_git/<repo>).`
   );
 }
-const adoOrganization = parsedRepo?.organization ?? requireEnv('SATURN_ADO_ORG');
-const adoProject = parsedRepo?.project ?? requireEnv('SATURN_ADO_PROJECT');
-const adoRepositoryName = parsedRepo?.repositoryName ?? requireEnv('SATURN_ADO_REPO_NAME');
+const adoOrganization = parsedRepo?.organization ?? envOrDefault('SATURN_ADO_ORG', '');
+const adoProject = parsedRepo?.project ?? envOrDefault('SATURN_ADO_PROJECT', '');
+const adoRepositoryName = parsedRepo?.repositoryName ?? envOrDefault('SATURN_ADO_REPO_NAME', '');
 
 /**
  * Azure DevOps identity for the repository Saturn reviews. Simplest setup: SATURN_REPO_URL (the repo's URL)
@@ -160,6 +205,18 @@ export const AZURE_DEVOPS_CONFIG: AzureDevOpsConfig = {
  * SATURN_REPO_DESCRIPTION for a richer phrase (e.g. "the Contoso payments monorepo").
  */
 export const REPO_DESCRIPTION: string = envOrDefault('SATURN_REPO_DESCRIPTION', `the ${adoRepositoryName} repository`);
+
+/**
+ * True once Saturn has a repository configured (org/project/repo all resolved). When false, the dashboard runs
+ * in setup mode and the CLI/autopilot entrypoints exit early asking the user to run setup via the dashboard.
+ */
+export function isSaturnConfigured(): boolean {
+  return (
+    AZURE_DEVOPS_CONFIG.organization !== '' &&
+    AZURE_DEVOPS_CONFIG.project !== '' &&
+    AZURE_DEVOPS_CONFIG.repositoryName !== ''
+  );
+}
 
 interface LensPathRule {
   readonly pattern: RegExp;
