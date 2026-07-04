@@ -100,8 +100,16 @@ follow-ups (not done):
 - **Feature-build PR monitoring.** Unlike the bug-fix loop, a feature build opens the PR and stops; it does not
   address review/build feedback or clean up the branch afterward. Add monitoring (reuse the fix monitor) or an
   explicit "address feedback" action from chat.
-- **Build-trigger authorization.** Approve-&-build is open to every (Microsoft-authenticated) viewer, with the
-  requester recorded. Once EasyAuth lands, decide whether to gate builds to the owner/devs.
+- **Design-approval gate + PR-creation safety — shipped.** A pull request is now created ONLY via an explicit,
+  confirmed design approval: (a) the read-only design agent is denied the Azure DevOps + GitHub MCP servers
+  entirely (verified: `--deny-tool=azure-devops` blocks the server's tools), so it can no longer open PRs or
+  work items during research; and (b) approve-&-build now shows a confirmation dialog stating a branch + pull
+  request will be opened, so a PR is never started by a stray click. Remaining (not done): (i) approve-&-build
+  is still reachable by every (Microsoft-authenticated) viewer with only the requester recorded — once EasyAuth
+  lands, gate builds to the owner/devs and enforce it **server-side** (the confirmation dialog is client-only);
+  and (ii) the feature-BUILD and Code-Autopilot model calls still run with the ADO/GitHub MCP reachable (they
+  need MCP reads) — deny the MCP *write* tools (create/update PR, work item, issue) so only Saturn's REST code
+  ever creates those artifacts.
 - **Richer cross-session memory.** Retrieval is keyword/`LIKE`-based over artifact title+body; consider FTS5 or
   embeddings for better recall, and include prior chat messages (not just design docs).
 - **Chat store retention.** `chat.db` (conversations/messages/artifacts/feature_builds) grows unbounded — add a
@@ -112,6 +120,9 @@ follow-ups (not done):
   (transitive) — review and resolve or document it.
 - **Textarea polish.** The composer is a fixed 2-row textarea (Enter sends, Shift+Enter newlines); add
   auto-grow up to a max height for longer prompts.
+- **Faster chat load — shipped.** The ~3.4 MB mermaid bundle is no longer a blocking `<script>` in the page
+  head; it lazy-loads only when a design doc containing a diagram is opened, so the conversation list and chat
+  app render immediately (previously the whole app blocked on that download, especially over the tunnel).
 
 ## Setup installer & multi-repo
 

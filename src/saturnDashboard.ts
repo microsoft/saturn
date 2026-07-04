@@ -578,7 +578,6 @@ const DASHBOARD_HTML = `<!doctype html>
   .fx-table { border-collapse:collapse; width:100%; } .fx-table th,.fx-table td { border:1px solid var(--line,#232a44); padding:6px 8px; font-size:13px; text-align:left; }
 </style>
 <script src="/vendor/chart.umd.min.js"></script>
-<script src="/vendor/mermaid.min.js"></script>
 <script src="/vendor/react.min.js"></script>
 <script src="/vendor/react-dom.min.js"></script>
 </head>
@@ -2374,13 +2373,28 @@ const DASHBOARD_HTML = `<!doctype html>
 
   // ---- React-based Chat tab: streaming, resizable panels, on-demand design-doc view ----
   var __chatMermaidReady = false;
-  function chatEnsureMermaid() {
+  var __chatMermaidLoading = false;
+  var __chatMermaidCbs = [];
+  function chatMermaidInit() {
     if (__chatMermaidReady || !window.mermaid) { return; }
     try {
       var isLight = document.documentElement.getAttribute('data-theme') === 'light' || document.body.classList.contains('light');
       window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: isLight ? 'default' : 'dark' });
       __chatMermaidReady = true;
     } catch (e) {}
+  }
+  // Lazy-load the (multi-MB) mermaid bundle only when a design doc is actually viewed, so the chat app and the
+  // conversation list are not blocked on that download at page load. Runs cb once mermaid is ready.
+  function chatEnsureMermaid(cb) {
+    if (window.mermaid) { chatMermaidInit(); if (cb) { cb(); } return; }
+    if (cb) { __chatMermaidCbs.push(cb); }
+    if (__chatMermaidLoading) { return; }
+    __chatMermaidLoading = true;
+    var s = document.createElement('script');
+    s.src = '/vendor/mermaid.min.js';
+    s.onload = function () { chatMermaidInit(); var cbs = __chatMermaidCbs; __chatMermaidCbs = []; for (var i = 0; i < cbs.length; i++) { try { cbs[i](); } catch (e) {} } };
+    s.onerror = function () { __chatMermaidLoading = false; };
+    document.head.appendChild(s);
   }
 
   function currentTitle(convos, id) {
@@ -2443,10 +2457,11 @@ const DASHBOARD_HTML = `<!doctype html>
     }, [docOpen, artifact]);
     useEffect(function () {
       var el = docBodyRef.current;
-      if (!el || !docHtml || !window.mermaid) { return; }
-      chatEnsureMermaid();
-      var blocks = Array.prototype.slice.call(el.querySelectorAll('pre.mermaid'));
-      if (blocks.length) { try { window.mermaid.run({ nodes: blocks, suppressErrors: true }); } catch (e) {} }
+      if (!el || !docHtml) { return; }
+      chatEnsureMermaid(function () {
+        var blocks = Array.prototype.slice.call(el.querySelectorAll('pre.mermaid'));
+        if (blocks.length) { try { window.mermaid.run({ nodes: blocks, suppressErrors: true }); } catch (e) {} }
+      });
     }, [docHtml]);
     // While a build is running, poll so the PR link + status appear without a manual refresh.
     useEffect(function () {
@@ -2541,16 +2556,22 @@ const DASHBOARD_HTML = `<!doctype html>
       } else if (dialog.mode === 'delete') {
         var did = dialog.id;
         apost('/api/chat/delete', { id: did }).then(function () { loadConvos(); if (did === currentId) { setCurrentId(null); } }).catch(function () {});
+      } else if (dialog.mode === 'build') {
+        if (artifact) {
+          var payload = { conversationId: currentId, artifactId: artifact.id };
+          if (dialog.option) { payload.selectedOption = dialog.option; }
+          if (dialog.best) { payload.proceedWithBest = true; }
+          apost('/api/chat/approve', payload).then(function () { refreshConversation(currentId); }).catch(function () {});
+        }
       }
       setDialog(null);
-    }, [dialog, renameValue, loadConvos, currentId]);
-    var approve = useCallback(function (option, best) {
+    }, [dialog, renameValue, loadConvos, currentId, artifact, refreshConversation]);
+    // Building creates a branch and opens a pull request, so it must be a deliberate, confirmed approval -
+    // never a stray click. Open a confirmation dialog first; the actual approve+build runs on confirm.
+    var askBuild = useCallback(function (option, best) {
       if (!artifact) { return; }
-      var payload = { conversationId: currentId, artifactId: artifact.id };
-      if (option) { payload.selectedOption = option; }
-      if (best) { payload.proceedWithBest = true; }
-      apost('/api/chat/approve', payload).then(function () { refreshConversation(currentId); }).catch(function () {});
-    }, [artifact, currentId, refreshConversation]);
+      setDialog({ mode: 'build', option: option || null, best: !!best, title: artifact.title || 'this design' });
+    }, [artifact]);
 
     function startDrag(which, e) {
       e.preventDefault();
@@ -2573,11 +2594,11 @@ const DASHBOARD_HTML = `<!doctype html>
         var opts = artifact.options || [];
         if (opts.length > 1) {
           build = [h('span', { key: 'l', className: 'muted-note', style: { width: '100%' } }, 'Choose an approach to build:')]
-            .concat(opts.map(function (o, i) { return h('button', { key: 'o' + i, className: 'btn sm', title: o.summary || '', onClick: function () { approve(o.label, false); } }, (o.recommended ? '\u2605 ' : '') + o.label); }))
-            .concat([h('button', { key: 'best', className: 'btn sm ghost', onClick: function () { approve(null, true); } }, 'Build best option')]);
+            .concat(opts.map(function (o, i) { return h('button', { key: 'o' + i, className: 'btn sm', title: o.summary || '', onClick: function () { askBuild(o.label, false); } }, (o.recommended ? '\u2605 ' : '') + o.label); }))
+            .concat([h('button', { key: 'best', className: 'btn sm ghost', onClick: function () { askBuild(null, true); } }, 'Build best option')]);
         } else {
           var only = (opts[0] && opts[0].label) ? opts[0].label : null;
-          build = h('button', { className: 'btn sm', onClick: function () { approve(only, false); } }, 'Approve & build');
+          build = h('button', { className: 'btn sm', onClick: function () { askBuild(only, false); } }, 'Approve & build');
         }
       }
       return h('div', { className: 'chat-doc', key: 'doc', style: { width: rightW } },
@@ -2651,6 +2672,13 @@ const DASHBOARD_HTML = `<!doctype html>
           h('div', { className: 'chat-modal-actions' },
             h('button', { className: 'btn ghost sm', onClick: closeDialog }, 'Cancel'),
             h('button', { className: 'btn sm', onClick: confirmDialog, disabled: !renameValue.trim() }, 'Save')));
+      } else if (dialog.mode === 'build') {
+        box = h('div', { className: 'chat-modal', onMouseDown: function (e) { e.stopPropagation(); } },
+          h('h3', null, 'Approve design & build'),
+          h('p', { className: 'chat-modal-msg' }, 'This approves ' + (dialog.title ? '\u201c' + dialog.title + '\u201d' : 'this design') + (dialog.option ? ' (approach: ' + dialog.option + ')' : (dialog.best ? ' (recommended approach)' : '')) + ' and starts a build that creates a branch and opens a pull request. Continue?'),
+          h('div', { className: 'chat-modal-actions' },
+            h('button', { className: 'btn ghost sm', onClick: closeDialog }, 'Cancel'),
+            h('button', { className: 'btn sm', onClick: confirmDialog }, 'Approve & build')));
       } else {
         box = h('div', { className: 'chat-modal', onMouseDown: function (e) { e.stopPropagation(); } },
           h('h3', null, 'Delete conversation'),

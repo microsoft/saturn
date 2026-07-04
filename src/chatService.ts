@@ -110,8 +110,7 @@ export function generateTitleAsync(
                 model: primaryModel(),
                 reasoningEffort: 'low',
                 repoRoot: env.cloneDir,
-                timeoutMs: chatTimeoutMs(),
-                ...(env.allowMcpServerName !== undefined ? { allowMcpServerName: env.allowMcpServerName } : {})
+                timeoutMs: chatTimeoutMs()
             };
             const title = await generateTitle(ctx, firstMessage, logger);
             if (title === undefined || title === '') {
@@ -218,8 +217,7 @@ export async function handleChatTurn(
         model: primaryModel(),
         reasoningEffort: chatEffort(),
         repoRoot: env.cloneDir,
-        timeoutMs: chatTimeoutMs(),
-        ...(env.allowMcpServerName !== undefined ? { allowMcpServerName: env.allowMcpServerName } : {})
+        timeoutMs: chatTimeoutMs()
     };
 
     const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger, onProgress);

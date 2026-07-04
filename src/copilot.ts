@@ -369,6 +369,8 @@ export interface RunCopilotReviewOptions {
   readonly cwd: string;
   readonly timeoutMs: number;
   readonly allowMcpServerName?: string;
+  /** Extra --deny-tool entries appended to the base deny list for this call (e.g. deny whole MCP servers). */
+  readonly extraDeniedTools?: readonly string[];
   /** When 'json', run the CLI with --output-format json --stream on (JSONL event stream for live CoT). */
   readonly outputFormat?: 'text' | 'json';
   /** Called with each raw CLI output chunk as it arrives, for live progress / chain-of-thought streaming. */
@@ -449,7 +451,7 @@ async function runCopilotWithDeniedTools(
       baseArgs.push('--effort', options.reasoningEffort);
     }
     baseArgs.push('--allow-all-tools');
-    for (const deniedTool of deniedTools) {
+    for (const deniedTool of [...deniedTools, ...(options.extraDeniedTools ?? [])]) {
       baseArgs.push(`--deny-tool=${deniedTool}`);
     }
 
