@@ -540,6 +540,13 @@ const DASHBOARD_HTML = `<!doctype html>
   .chat-md pre.code code { background:none; padding:0; }
   .chat-md h1,.chat-md h2,.chat-md h3 { font-size:15px; margin:8px 0 4px; line-height:1.3; }
   .chat-md a { color:#9db8ff; }
+  .chat-modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:center; justify-content:center; z-index:1000; }
+  .chat-modal { background:var(--bg,#0b1020); border:1px solid var(--line,#232a44); border-radius:12px; padding:20px; width:min(420px,92vw); box-shadow:0 16px 48px rgba(0,0,0,.5); }
+  .chat-modal h3 { margin:0 0 12px; font-size:16px; }
+  .chat-modal-msg { margin:0 0 18px; color:var(--muted,#8b93b5); font-size:14px; line-height:1.55; }
+  .chat-modal-input { width:100%; box-sizing:border-box; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:8px; padding:10px 12px; font:inherit; margin-bottom:18px; }
+  .chat-modal-input:focus { outline:none; border-color:#3168ff; }
+  .chat-modal-actions { display:flex; justify-content:flex-end; gap:8px; }
   .chat-docbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line,#232a44); background:rgba(41,82,227,.06); }
   .chat-composer { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line,#232a44); align-items:flex-end; }
   .chat-input { flex:1; resize:none; max-height:160px; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
@@ -2396,6 +2403,8 @@ const DASHBOARD_HTML = `<!doctype html>
     var s12 = useState(''); var draft = s12[0], setDraft = s12[1];
     var s13 = useState([]); var cot = s13[0], setCot = s13[1];
     var s14 = useState(true); var cotOpen = s14[0], setCotOpen = s14[1];
+    var s15 = useState(null); var dialog = s15[0], setDialog = s15[1];
+    var s16 = useState(''); var renameValue = s16[0], setRenameValue = s16[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
@@ -2472,6 +2481,7 @@ const DASHBOARD_HTML = `<!doctype html>
               if (!dataStr) { return; }
               var data; try { data = JSON.parse(dataStr); } catch (e) { return; }
               if (ev === 'status') { setStatusText(data.text || ''); }
+              else if (ev === 'title') { if (data.title) { setConvos(function (p) { return p.map(function (c) { return c.id === convId ? Object.assign({}, c, { title: data.title }) : c; }); }); } }
               else if (ev === 'cot') { setCot(function (p) { var n = p.concat([data.text || '']); return n.length > 200 ? n.slice(n.length - 200) : n; }); }
               else if (ev === 'delta') { setCotOpen(false); setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
               else if (ev === 'artifact') { if (data.artifact) { setArtifact(data.artifact); } }
@@ -2495,7 +2505,13 @@ const DASHBOARD_HTML = `<!doctype html>
       setMessages(function (p) { return p.concat([{ role: 'user', content: text }]); });
       if (!currentId) {
         apost('/api/chat/conversations', {}).then(function (resp) {
-          if (resp && resp.conversation) { setCurrentId(resp.conversation.id); loadConvos(); doStream(resp.conversation.id, text); }
+          if (resp && resp.conversation) {
+            var nc = resp.conversation;
+            var prov = text.trim().split(' ').slice(0, 8).join(' ').slice(0, 60);
+            setConvos(function (p) { return [Object.assign({}, nc, { title: prov || (nc.title || 'New chat') })].concat(p.filter(function (x) { return x.id !== nc.id; })); });
+            setCurrentId(nc.id);
+            doStream(nc.id, text);
+          }
         }).catch(function () {});
       } else { doStream(currentId, text); }
     }, [draft, currentId, doStream, loadConvos]);
@@ -2503,17 +2519,25 @@ const DASHBOARD_HTML = `<!doctype html>
     var newChat = useCallback(function () {
       apost('/api/chat/conversations', {}).then(function (resp) { if (resp && resp.conversation) { loadConvos(); setCurrentId(resp.conversation.id); } }).catch(function () {});
     }, [loadConvos]);
-    var deleteConv = useCallback(function (id, e) {
+    var openDialog = useCallback(function (mode, c, e) {
       e.stopPropagation();
-      apost('/api/chat/delete', { id: id }).then(function () { loadConvos(); if (id === currentId) { setCurrentId(null); } }).catch(function () {});
-    }, [loadConvos, currentId]);
-    var renameConv = useCallback(function (c, e) {
-      e.stopPropagation();
-      var name = window.prompt('Rename conversation', c.title || '');
-      if (name === null) { return; }
-      var t = name.trim(); if (t === '') { return; }
-      apost('/api/chat/rename', { id: c.id, title: t }).then(function () { setConvos(function (p) { return p.map(function (x) { return x.id === c.id ? Object.assign({}, x, { title: t }) : x; }); }); }).catch(function () {});
+      setDialog({ mode: mode, id: c.id, title: c.title || 'New chat' });
+      if (mode === 'rename') { setRenameValue(c.title || ''); }
     }, []);
+    var closeDialog = useCallback(function () { setDialog(null); }, []);
+    var confirmDialog = useCallback(function () {
+      if (!dialog) { return; }
+      if (dialog.mode === 'rename') {
+        var t = (renameValue || '').trim();
+        if (t === '') { return; }
+        var rid = dialog.id;
+        apost('/api/chat/rename', { id: rid, title: t }).then(function () { setConvos(function (p) { return p.map(function (x) { return x.id === rid ? Object.assign({}, x, { title: t }) : x; }); }); }).catch(function () {});
+      } else if (dialog.mode === 'delete') {
+        var did = dialog.id;
+        apost('/api/chat/delete', { id: did }).then(function () { loadConvos(); if (did === currentId) { setCurrentId(null); } }).catch(function () {});
+      }
+      setDialog(null);
+    }, [dialog, renameValue, loadConvos, currentId]);
     var approve = useCallback(function (option, best) {
       if (!artifact) { return; }
       var payload = { conversationId: currentId, artifactId: artifact.id };
@@ -2570,8 +2594,8 @@ const DASHBOARD_HTML = `<!doctype html>
         convos.map(function (c) {
           return h('div', { key: c.id, className: 'chat-conv' + (c.id === currentId ? ' active' : ''), onClick: function () { setCurrentId(c.id); setDocOpen(false); } },
             h('span', { className: 'title' }, c.title || 'New chat'),
-            h('button', { className: 'del', title: 'Rename', onClick: function (e) { renameConv(c, e); } }, '\u270e'),
-            h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { deleteConv(c.id, e); } }, '\u00d7'));
+            h('button', { className: 'del', title: 'Rename', onClick: function (e) { openDialog('rename', c, e); } }, '\u270e'),
+            h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { openDialog('delete', c, e); } }, '\u00d7'));
         })
       )
     );
@@ -2609,7 +2633,29 @@ const DASHBOARD_HTML = `<!doctype html>
       children.push(h('div', { key: 'rs', className: 'chat-splitter', onMouseDown: function (e) { startDrag('right', e); } }));
       children.push(docPanel());
     }
-    return h('div', { className: 'chat-shell' }, children);
+    var modal = null;
+    if (dialog) {
+      var box;
+      if (dialog.mode === 'rename') {
+        box = h('div', { className: 'chat-modal', onMouseDown: function (e) { e.stopPropagation(); } },
+          h('h3', null, 'Rename conversation'),
+          h('input', { className: 'chat-modal-input', value: renameValue, autoFocus: true,
+            onChange: function (e) { setRenameValue(e.target.value); },
+            onKeyDown: function (e) { if (e.key === 'Enter') { e.preventDefault(); confirmDialog(); } else if (e.key === 'Escape') { closeDialog(); } } }),
+          h('div', { className: 'chat-modal-actions' },
+            h('button', { className: 'btn ghost sm', onClick: closeDialog }, 'Cancel'),
+            h('button', { className: 'btn sm', onClick: confirmDialog, disabled: !renameValue.trim() }, 'Save')));
+      } else {
+        box = h('div', { className: 'chat-modal', onMouseDown: function (e) { e.stopPropagation(); } },
+          h('h3', null, 'Delete conversation'),
+          h('p', { className: 'chat-modal-msg' }, 'Delete \u201c' + (dialog.title || 'this conversation') + '\u201d? This cannot be undone.'),
+          h('div', { className: 'chat-modal-actions' },
+            h('button', { className: 'btn ghost sm', onClick: closeDialog }, 'Cancel'),
+            h('button', { className: 'btn danger sm', onClick: confirmDialog }, 'Delete')));
+      }
+      modal = h('div', { className: 'chat-modal-overlay', onMouseDown: closeDialog }, box);
+    }
+    return h('div', null, h('div', { className: 'chat-shell' }, children), modal);
   }
 
   var __chatMounted = false;
@@ -3738,37 +3784,64 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       }
     };
+    // Provisional title (instant): derived from the first message, shown immediately; refined by the AI on 'done'.
+    const startConv = getConversation(conversationId);
+    if (startConv !== undefined && (startConv.title === 'New chat' || startConv.title.trim() === '')) {
+      const provisional = message.trim().split(/\s+/).slice(0, 7).join(' ').slice(0, 60);
+      if (provisional !== '') {
+        send('title', { title: provisional });
+      }
+    }
     send('status', { text: 'Researching the codebase' });
-    // Stream the CLI's live activity as chain-of-thought: buffer output into lines, strip ANSI, and stop once
-    // the model starts emitting the final JSON answer (that is streamed separately as the reply text).
-    let cotBuffer = '';
-    let jsonStarted = false;
-    let lastCot = Date.now();
-    const onProgress = (chunk: string): void => {
-      if (jsonStarted || closed) {
+    // The design agent emits [[THINK]] / [[REPLY]] / [[META]] sections. Route THINK lines to 'cot' (live
+    // chain-of-thought) and REPLY text to 'delta' (the streamed answer) as they arrive from the model.
+    let section = 'pre';
+    let lineBuf = '';
+    let streamedReply = false;
+    let lastActivity = Date.now();
+    const handleLine = (rawLine: string): void => {
+      const trimmed = rawLine.trim();
+      if (trimmed === '[[THINK]]') {
+        section = 'think';
         return;
       }
-      cotBuffer += chunk;
-      const parts = cotBuffer.split('\n');
-      cotBuffer = parts.pop() ?? '';
-      for (const rawLine of parts) {
-        const line = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+$/, '').trim();
-        if (line === '') {
-          continue;
+      if (trimmed === '[[REPLY]]') {
+        section = 'reply';
+        return;
+      }
+      if (trimmed === '[[META]]') {
+        section = 'meta';
+        return;
+      }
+      if (section === 'think') {
+        const line = rawLine.replace(/\u001b\[[0-9;]*m/g, '').replace(/\s+$/, '');
+        if (line.trim() !== '') {
+          send('cot', { text: line.slice(0, 500) });
+          lastActivity = Date.now();
         }
-        if (/["']?reply["']?\s*:/.test(line) || /^```json/i.test(line) || (line.startsWith('{') && line.length <= 3)) {
-          jsonStarted = true;
-          return;
-        }
-        send('cot', { text: line.slice(0, 500) });
-        lastCot = Date.now();
+      } else if (section === 'reply') {
+        send('delta', { text: `${rawLine}\n` });
+        streamedReply = true;
+        lastActivity = Date.now();
       }
     };
-    // Fallback status only when no live CoT arrived recently, so the panel is never silent during long calls.
+    const onProgress = (chunk: string): void => {
+      if (closed) {
+        return;
+      }
+      lineBuf += chunk;
+      let nl = lineBuf.indexOf('\n');
+      while (nl >= 0) {
+        handleLine(lineBuf.slice(0, nl));
+        lineBuf = lineBuf.slice(nl + 1);
+        nl = lineBuf.indexOf('\n');
+      }
+    };
+    // Fallback status while the model researches silently (no output yet), so the panel is never blank.
     const labels = ['Reading the repository', 'Assessing feasibility', 'Weighing options', 'Drafting the response'];
     let labelIndex = 0;
     const heartbeat = setInterval(() => {
-      if (Date.now() - lastCot > 4000) {
+      if (Date.now() - lastActivity > 4000) {
         send('status', { text: labels[labelIndex % labels.length] });
         labelIndex += 1;
       }
@@ -3788,16 +3861,25 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       res.end();
       return;
     }
-    const assistantMessage = [...result.messages].reverse().find((m) => m.role === 'assistant');
-    const reply = assistantMessage !== undefined ? assistantMessage.content : '';
-    const tokens = reply.match(/\S+\s*/g) ?? (reply === '' ? [] : [reply]);
-    let buffer = '';
-    for (let i = 0; i < tokens.length && !closed; i += 1) {
-      buffer += tokens[i];
-      if (buffer.length >= 14 || i === tokens.length - 1) {
-        send('delta', { text: buffer });
-        buffer = '';
-        await sseDelay(22);
+    // Flush any trailing reply text that had no closing newline.
+    if (section === 'reply' && lineBuf.trim() !== '') {
+      send('delta', { text: lineBuf });
+      streamedReply = true;
+      lineBuf = '';
+    }
+    // Fallback: if the model didn't use the sectioned format, stream the parsed reply now in paced chunks.
+    if (!streamedReply) {
+      const assistantMessage = [...result.messages].reverse().find((m) => m.role === 'assistant');
+      const reply = assistantMessage !== undefined ? assistantMessage.content : '';
+      const tokens = reply.match(/\S+\s*/g) ?? (reply === '' ? [] : [reply]);
+      let buffer = '';
+      for (let i = 0; i < tokens.length && !closed; i += 1) {
+        buffer += tokens[i];
+        if (buffer.length >= 14 || i === tokens.length - 1) {
+          send('delta', { text: buffer });
+          buffer = '';
+          await sseDelay(22);
+        }
       }
     }
     send('done', {

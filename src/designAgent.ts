@@ -152,10 +152,16 @@ function buildDesignPrompt(input: DesignTurnInput): string {
         'NEW USER MESSAGE:',
         truncate(input.userMessage, MAX_MESSAGE_CHARS),
         '',
-        'RESPOND WITH ONLY a single JSON object (no prose outside it, no markdown fence around the whole object) in',
-        'this exact shape:',
+        'RESPOND IN EXACTLY THREE SECTIONS, IN THIS ORDER, each introduced by its EXACT marker line alone on a line:',
+        '[[THINK]]',
+        'A few short lines of your reasoning as you work: what you checked in the code, key feasibility',
+        'considerations, and trade-offs. This is shown to the user live as your thinking - keep it brief and human.',
+        '[[REPLY]]',
+        'Your conversational reply to the user, in markdown. This is streamed to the user as the answer; put the',
+        'human-facing message HERE (not in the JSON below).',
+        '[[META]]',
+        'A single JSON object (no prose, no code fence) with the structured result:',
         '{',
-        '  "reply": "your conversational reply (markdown allowed)",',
         '  "feasibility": "possible" | "not-possible" | "conditional" | null,',
         '  "reason": "why, especially if not-possible/conditional (or null)",',
         '  "options": [ { "label": "short name", "summary": "1-2 sentences", "recommended": true|false } ],',
@@ -174,7 +180,7 @@ const optionSchema = z.object({
 
 const responseSchema = z
     .object({
-        reply: z.string(),
+        reply: z.string().nullish(),
         feasibility: z.enum(['possible', 'not-possible', 'conditional']).nullish(),
         reason: z.string().nullish(),
         options: z.array(optionSchema).nullish(),
@@ -196,6 +202,20 @@ function extractJson(output: string): string | undefined {
         return output.slice(first, last + 1);
     }
     return undefined;
+}
+
+/** Split the agent's sectioned output into its THINK / REPLY / META parts (empty strings when a marker is absent). */
+function parseSections(output: string): { readonly think: string; readonly reply: string; readonly meta: string } {
+    const thinkIdx = output.indexOf('[[THINK]]');
+    const replyIdx = output.indexOf('[[REPLY]]');
+    const metaIdx = output.indexOf('[[META]]');
+    if (replyIdx === -1 || metaIdx === -1 || metaIdx < replyIdx) {
+        return { think: '', reply: '', meta: '' };
+    }
+    const think = thinkIdx !== -1 && thinkIdx < replyIdx ? output.slice(thinkIdx + 9, replyIdx).trim() : '';
+    const reply = output.slice(replyIdx + 9, metaIdx).trim();
+    const meta = output.slice(metaIdx + 8).trim();
+    return { think, reply, meta };
 }
 
 function toOptions(raw: z.infer<typeof responseSchema>['options']): readonly DesignOption[] {
@@ -250,43 +270,50 @@ export async function runDesignTurn(
         };
     }
 
-    const jsonText = extractJson(result.stdout);
-    if (jsonText === undefined) {
-        // The model answered but not as JSON - surface its raw text rather than dropping the turn.
-        const fallback = result.stdout.trim();
+    const sections = parseSections(result.stdout);
+    const metaSource = sections.meta !== '' ? sections.meta : result.stdout;
+    const jsonText = extractJson(metaSource);
+    let meta: z.infer<typeof responseSchema> | undefined;
+    if (jsonText !== undefined) {
+        try {
+            const parsed = responseSchema.safeParse(JSON.parse(jsonText));
+            if (parsed.success) {
+                meta = parsed.data;
+            }
+        } catch {
+            /* fall through to the raw-text fallback */
+        }
+    }
+    let reply = sections.reply;
+    if (reply === '' && meta !== undefined && meta.reply !== null && meta.reply !== undefined) {
+        reply = meta.reply;
+    }
+    if (reply === '' && meta === undefined) {
+        const rawText = result.stdout.trim();
         return {
-            reply: fallback === '' ? 'Sorry - I did not produce a usable response. Please try again.' : fallback,
+            reply: rawText === '' ? 'Sorry - I did not produce a usable response. Please try again.' : rawText,
             options: [],
             askAudience: false
         };
     }
-
-    let parsedJson: unknown;
-    try {
-        parsedJson = JSON.parse(jsonText);
-    } catch {
-        return { reply: result.stdout.trim(), options: [], askAudience: false };
-    }
-
-    const parsed = responseSchema.safeParse(parsedJson);
-    if (!parsed.success) {
-        return { reply: result.stdout.trim(), options: [], askAudience: false };
-    }
-
-    const data = parsed.data;
     return {
-        reply: data.reply,
-        ...(data.feasibility !== null && data.feasibility !== undefined ? { feasibility: data.feasibility } : {}),
-        ...(data.reason !== null && data.reason !== undefined && data.reason.trim() !== ''
-            ? { reason: data.reason }
+        reply: reply !== '' ? reply : 'Done.',
+        ...(meta !== undefined && meta.feasibility !== null && meta.feasibility !== undefined
+            ? { feasibility: meta.feasibility }
             : {}),
-        options: toOptions(data.options),
-        askAudience: data.askAudience === true,
-        ...(data.designDoc !== null && data.designDoc !== undefined
-            ? { designDoc: { title: data.designDoc.title, markdown: data.designDoc.markdown } }
+        ...(meta !== undefined && meta.reason !== null && meta.reason !== undefined && meta.reason.trim() !== ''
+            ? { reason: meta.reason }
             : {}),
-        ...(data.suggestedTitle !== null && data.suggestedTitle !== undefined && data.suggestedTitle.trim() !== ''
-            ? { suggestedTitle: data.suggestedTitle.trim() }
+        options: toOptions(meta === undefined ? undefined : meta.options),
+        askAudience: meta !== undefined && meta.askAudience === true,
+        ...(meta !== undefined && meta.designDoc !== null && meta.designDoc !== undefined
+            ? { designDoc: { title: meta.designDoc.title, markdown: meta.designDoc.markdown } }
+            : {}),
+        ...(meta !== undefined &&
+        meta.suggestedTitle !== null &&
+        meta.suggestedTitle !== undefined &&
+        meta.suggestedTitle.trim() !== ''
+            ? { suggestedTitle: meta.suggestedTitle.trim() }
             : {})
     };
 }

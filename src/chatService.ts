@@ -195,8 +195,14 @@ export async function handleChatTurn(
         ...(artifact !== undefined ? { artifactId: artifact.id } : {})
     });
 
-    if ((conversation.title === 'New chat' || conversation.title.trim() === '') && result.suggestedTitle !== undefined) {
-        conversation = updateConversation(conversationId, { title: result.suggestedTitle }) ?? conversation;
+    if (conversation.title === 'New chat' || conversation.title.trim() === '') {
+        const suggested =
+            result.suggestedTitle !== undefined && result.suggestedTitle.trim() !== ''
+                ? result.suggestedTitle.trim()
+                : userMessage.trim().split(/\s+/).slice(0, 8).join(' ').slice(0, 60);
+        if (suggested !== '') {
+            conversation = updateConversation(conversationId, { title: suggested }) ?? conversation;
+        }
     }
 
     return {
