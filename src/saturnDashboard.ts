@@ -2449,6 +2449,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var s15 = useState(null); var dialog = s15[0], setDialog = s15[1];
     var s16 = useState(''); var renameValue = s16[0], setRenameValue = s16[1];
     var s17 = useState(false); var mdCopied = s17[0], setMdCopied = s17[1];
+    var s18 = useState(false); var owner = s18[0], setOwner = s18[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
@@ -2467,6 +2468,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }, []);
 
     useEffect(function () { loadConvos(); }, [loadConvos]);
+    useEffect(function () { fetch('/api/whoami').then(function (r) { return r.json(); }).then(function (w) { setOwner(!!w.isOwner); }).catch(function () {}); }, []);
     useEffect(function () {
       if (!currentId) { setMessages([]); setArtifact(null); setDocOpen(false); return; }
       fetch('/api/chat/conversation?id=' + encodeURIComponent(currentId)).then(function (r) { return r.json(); }).then(function (d) {
@@ -2625,6 +2627,7 @@ const DASHBOARD_HTML = `<!doctype html>
       if (artifact.feasibility === 'not-possible') { build = h('div', { className: 'muted-note' }, 'Marked not feasible - refine the request before building.'); }
       else if (artifact.status === 'building' || artifact.status === 'approved') { build = h('span', { className: 'muted-note' }, 'Build in progress - see the Code Autopilot tab.'); }
       else if (artifact.status === 'built') { build = h('span', { className: 'muted-note' }, 'Built - a pull request was opened.'); }
+      else if (!owner) { build = h('span', { className: 'muted-note' }, 'Only the owner can approve & build this design.'); }
       else {
         var opts = artifact.options || [];
         if (opts.length > 1) {
@@ -2650,14 +2653,14 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     var sidebar = h('div', { key: 'sb', className: 'chat-sidebar', style: { width: leftW } },
-      h('button', { className: 'btn chat-newbtn', onClick: newChat }, '+ New chat'),
+      owner ? h('button', { className: 'btn chat-newbtn', onClick: newChat }, '+ New chat') : null,
       h('div', { className: 'chat-conv-list' },
         convos.length === 0 ? h('div', { className: 'chat-empty' }, 'No conversations yet.') :
         convos.map(function (c) {
           return h('div', { key: c.id, className: 'chat-conv' + (c.id === currentId ? ' active' : ''), onClick: function () { setCurrentId(c.id); setDocOpen(false); } },
             h('span', { className: 'title' }, c.title || 'New chat'),
-            h('button', { className: 'del', title: 'Rename', onClick: function (e) { openDialog('rename', c, e); } }, '\u270e'),
-            h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { openDialog('delete', c, e); } }, '\u00d7'));
+            owner ? h('button', { className: 'del', title: 'Rename', onClick: function (e) { openDialog('rename', c, e); } }, '\u270e') : null,
+            owner ? h('button', { className: 'del', title: 'Delete conversation', onClick: function (e) { openDialog('delete', c, e); } }, '\u00d7') : null);
         })
       )
     );
@@ -2684,10 +2687,12 @@ const DASHBOARD_HTML = `<!doctype html>
       h('button', { className: 'btn sm', onClick: function () { setDocOpen(true); } }, '\ud83d\udcc4 Open design document'),
       artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
       h('span', { className: 'muted-note' }, artifact.title || '')) : null;
-    var composer = h('div', { className: 'chat-composer' },
-      h('textarea', { className: 'chat-input', rows: 2, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
-        onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
-      h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send'));
+    var composer = owner
+      ? h('div', { className: 'chat-composer' },
+        h('textarea', { className: 'chat-input', rows: 2, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
+          onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
+        h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send'))
+      : h('div', { className: 'chat-composer' }, h('span', { className: 'muted', style: { fontSize: '13px' } }, '\ud83d\udd12 Read-only view \u2014 only the owner can design & build here.'));
     var mainCol = h('div', { key: 'main', className: 'chat-col' }, h('div', { className: 'chat-head' }, currentTitle(convos, currentId)), thread, docBar, composer);
 
     var children = [sidebar, h('div', { key: 'ls', className: 'chat-splitter', onMouseDown: function (e) { startDrag('left', e); } }), mainCol];
@@ -3851,6 +3856,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/conversations') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
     let mode: 'design' | 'spec' = 'design';
     let title = '';
@@ -3889,6 +3895,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/message') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
     let conversationId = '';
     let message = '';
@@ -3915,6 +3922,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/stream') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     // Server-Sent-Events streaming of a chat turn: live status while the model researches, then the reply
     // text streamed in paced chunks, then a 'done' event carrying the (optional) design-doc artifact.
     const raw = await readRequestBody(req);
@@ -4161,6 +4169,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/rename') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
     let id = '';
     let title = '';
@@ -4179,6 +4188,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/delete') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
     let id = '';
     try {
@@ -4243,6 +4253,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/approve') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
     let conversationId = '';
     let artifactId = '';
