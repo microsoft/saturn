@@ -249,6 +249,7 @@ const DASHBOARD_HTML = `<!doctype html>
   [data-theme="light"] header { background: rgba(255,255,255,.74); }
   [data-theme="light"] .pr-head:hover { background: rgba(0,0,0,.03); }
   * { box-sizing: border-box; }
+  html { scrollbar-gutter: stable; }
   html, body { height: 100%; }
   body {
     margin: 0;
@@ -296,7 +297,7 @@ const DASHBOARD_HTML = `<!doctype html>
   .btn.sm { padding:6px 12px; font-size:12.5px; }
   .btn:disabled { opacity:.4; cursor:default; transform:none; }
   :focus-visible { outline:none; box-shadow: var(--ring); }
-  main { padding:26px 28px 80px; max-width:1080px; margin:0 auto; }
+  main { padding:26px 28px 80px; max-width:1720px; margin:0 auto; box-sizing:border-box; }
   .stats { display:grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap:14px; margin-bottom:26px; }
   .stat { background: linear-gradient(180deg, var(--panel-2), var(--panel)); border:1px solid var(--border-soft); border-radius:var(--radius); padding:14px 18px; }
   .stat .k { font-size:11.5px; letter-spacing:.4px; text-transform:uppercase; color:var(--muted-2); margin-bottom:6px; }
@@ -512,9 +513,12 @@ const DASHBOARD_HTML = `<!doctype html>
   .chat-conv .title { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .chat-conv .del { border:0; background:none; color:var(--muted,#8b93b5); cursor:pointer; font-size:16px; line-height:1; padding:0 4px; opacity:0; border-radius:4px; }
   .chat-conv:hover .del { opacity:.75; } .chat-conv .del:hover { opacity:1; color:var(--err,#ff7a8a); }
-  .chat-col { flex:1 1 auto; display:flex; flex-direction:column; min-width:0; }
+  .chat-col { flex:1 1 auto; display:flex; flex-direction:column; min-width:320px; }
   .chat-head { padding:12px 18px; border-bottom:1px solid var(--line,#232a44); font-weight:600; font-size:15px; }
   .chat-thread { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:16px; }
+  /* Center the conversation in a readable column so wide screens use the space gracefully instead of stretching
+     message lines edge to edge (the thread itself still fills the pane; only the message column is capped). */
+  .chat-thread > .chat-msg { width:100%; max-width:860px; margin-left:auto; margin-right:auto; }
   .chat-welcome { margin:auto; text-align:center; max-width:440px; color:var(--muted,#8b93b5); }
   .chat-welcome h3 { margin:0 0 8px; color:inherit; font-size:18px; }
   .chat-welcome p { margin:0; font-size:14px; line-height:1.6; }
@@ -558,6 +562,16 @@ const DASHBOARD_HTML = `<!doctype html>
   .chat-input:focus { outline:none; border-color:#3168ff; }
   .chat-splitter { flex:0 0 6px; cursor:col-resize; background:transparent; transition:background .15s; }
   .chat-splitter:hover { background:rgba(41,82,227,.35); }
+  /* Responsive chat layout. Wide screens: sidebar + thread + design-doc panel side by side (resizable). Below
+     this width there isn't room for three usable columns, so the design-doc panel becomes a full-shell overlay
+     (it keeps its own close button) instead of squeezing the conversation thread into a sliver; the drag
+     splitters - a pointer-only, wide-screen affordance - are hidden. */
+  @media (max-width:1240px) {
+    .chat-shell { position:relative; }
+    .chat-doc { position:absolute; inset:0; width:auto !important; z-index:30; background:var(--bg,#0b1020); box-shadow:0 0 48px rgba(0,0,0,.55); }
+    .chat-splitter { display:none; }
+  }
+  @media (max-width:640px) { .chat-sidebar { display:none; } }
   .chat-doc { flex:0 0 auto; display:flex; flex-direction:column; border-left:1px solid var(--line,#232a44); overflow:hidden; box-sizing:border-box; }
   .chat-doc-top { display:flex; align-items:center; gap:10px; padding:11px 14px; border-bottom:1px solid var(--line,#232a44); }
   .chat-doc-title2 { font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -2403,6 +2417,16 @@ const DASHBOARD_HTML = `<!doctype html>
     return 'Conversation';
   }
 
+  // Clipboard fallback for contexts where navigator.clipboard is unavailable (older or non-secure origins).
+  function chatCopyFallback(text) {
+    try {
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      var ok = document.execCommand('copy'); document.body.removeChild(ta); return ok;
+    } catch (e) { return false; }
+  }
+
   function ChatApp() {
     var React = window.React;
     var h = React.createElement;
@@ -2424,6 +2448,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var s14 = useState(true); var cotOpen = s14[0], setCotOpen = s14[1];
     var s15 = useState(null); var dialog = s15[0], setDialog = s15[1];
     var s16 = useState(''); var renameValue = s16[0], setRenameValue = s16[1];
+    var s17 = useState(false); var mdCopied = s17[0], setMdCopied = s17[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
@@ -2572,6 +2597,16 @@ const DASHBOARD_HTML = `<!doctype html>
       if (!artifact) { return; }
       setDialog({ mode: 'build', option: option || null, best: !!best, title: artifact.title || 'this design' });
     }, [artifact]);
+    // Copy the design doc's markdown (with the Saturn watermark the server appends) to the clipboard.
+    var copyMarkdown = useCallback(function () {
+      if (!artifact) { return; }
+      fetch('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + '&format=md').then(function (r) { return r.text(); }).then(function (md) {
+        function done() { setMdCopied(true); setTimeout(function () { setMdCopied(false); }, 1600); }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(md).then(done, function () { if (chatCopyFallback(md)) { done(); } });
+        } else if (chatCopyFallback(md)) { done(); }
+      }).catch(function () {});
+    }, [artifact]);
 
     function startDrag(which, e) {
       e.preventDefault();
@@ -2607,7 +2642,7 @@ const DASHBOARD_HTML = `<!doctype html>
           artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
           h('button', { className: 'chat-x', title: 'Close', onClick: function () { setDocOpen(false); } }, '\u00d7')
         ),
-        h('div', { className: 'chat-doc-actions2' }, docBtn('Download .md', '&format=md&download=1'), docBtn('Download .html', '&format=html&download=1'), docBtn('Open HTML', '&format=html'),
+        h('div', { className: 'chat-doc-actions2' }, h('button', { key: 'cpy', className: 'btn sm ghost', onClick: copyMarkdown }, mdCopied ? '\u2713 Copied' : 'Copy markdown'), docBtn('Download .html', '&format=html&download=1'), docBtn('Open HTML', '&format=html'),
           h('button', { key: 'tr', className: 'btn sm ghost', onClick: function () { window.open('/api/chat/transcript?id=' + encodeURIComponent(currentId) + '&format=html', '_blank'); } }, 'Transcript')),
         h('div', { className: 'chat-doc-build2' }, build),
         h('div', { className: 'chat-doc-scroll' }, h('div', { className: 'cbody', ref: docBodyRef, dangerouslySetInnerHTML: { __html: docHtml || 'Rendering...' } }))
@@ -4174,13 +4209,13 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         'Content-Type': 'text/markdown; charset=utf-8',
         ...(download ? { 'Content-Disposition': `attachment; filename="${fileName}.md"` } : {})
       });
-      res.end(artifact.markdown);
+      res.end(artifact.markdown + '\n\n---\n\n_Created by Saturn_\n');
       return;
     }
     if (format === 'fragment') {
       // Safe HTML fragment for the in-dashboard preview pane (diagrams rendered by the page's mermaid).
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderMarkdownToSafeHtml(artifact.markdown));
+      res.end(renderMarkdownToSafeHtml(artifact.markdown) + '<footer style="margin-top:32px;padding-top:12px;border-top:1px solid var(--line,#232a44);color:var(--muted,#8b93b5);font-size:12px;text-align:center;">Created by Saturn</footer>');
       return;
     }
     const mermaidScript = download ? inlineMermaidScript() : '<script src="/vendor/mermaid.min.js"></script>';

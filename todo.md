@@ -77,19 +77,20 @@ prompt composer accepts up to **~1 MB**; **delete conversation**; an
 **intent-based** design agent (no PM/spec toggle — it infers whether the requester is technical and asks
 clarifying questions); **cross-session memory** (a new chat reuses relevant prior design docs); and the
 **feature-build pipeline** extending Code Autopilot from bugs to features (approved design → branch →
-implement → **self-validate twice** → lint → PR, surfaced in chat + on the Code Autopilot tab). Remaining
-follow-ups (not done):
+implement → **self-validate twice** → lint → PR, surfaced in chat + on the Code Autopilot tab). The dashboard
+now uses the full screen width consistently across every tab (stable scrollbar gutter, no tab-switch shift),
+and the design-doc panel becomes a full-height overlay on narrow screens instead of crushing the conversation
+thread; the doc panel offers **Copy markdown** (clipboard) and every served/exported doc carries a **"Created
+by Saturn"** watermark. Remaining follow-ups (not done):
 
 - **Remove the legacy vanilla chat JS.** The pre-React chat script still ships inside the dashboard HTML
   template literal as inert (unused) code — only `chatEsc` + `loadFeatureBuilds` are still needed. Delete the
   rest. (Left in place deliberately: editing that large template-literal string is risky and a bad edit can
   silently break the whole dashboard script; remove it carefully with a browser smoke-test.)
-- **True token-level streaming — shipped.** Replies now stream real tokens as the model produces them, and
-  reasoning + tool activity render as live chain-of-thought before the answer. Two follow-ups to watch: (a)
-  the CoT streams the model's **raw reasoning** verbatim, which can be verbose — consider summarizing or
-  rate-limiting reasoning lines; and (b) the narration-vs-answer split relies on a heuristic (text streamed
-  before a `tool.execution_start` is treated as narration and reset), so an answer interleaved with a final
-  tool call could be briefly reset — the authoritative parsed reply on `done` still corrects it.
+- **Chain-of-thought polish.** The live CoT streams the model's **raw reasoning** verbatim, which can be
+  verbose — consider summarizing / rate-limiting reasoning lines. Also the narration-vs-answer split is a
+  heuristic (text streamed before a `tool.execution_start` is treated as narration and reset), so an answer
+  interleaved with a final tool call can briefly reset before the authoritative reply on `done` corrects it.
 - **Dedicated title call cost.** New conversations now fire a **separate** low-effort Copilot call just for the
   title (so it appears immediately, decoupled from the main turn). That is an extra CLI invocation per new
   chat; revisit if cost/latency matters (e.g. derive the title from the main turn's first tokens instead).
@@ -100,16 +101,12 @@ follow-ups (not done):
 - **Feature-build PR monitoring.** Unlike the bug-fix loop, a feature build opens the PR and stops; it does not
   address review/build feedback or clean up the branch afterward. Add monitoring (reuse the fix monitor) or an
   explicit "address feedback" action from chat.
-- **Design-approval gate + PR-creation safety — shipped.** A pull request is now created ONLY via an explicit,
-  confirmed design approval: (a) the read-only design agent is denied the Azure DevOps + GitHub MCP servers
-  entirely (verified: `--deny-tool=azure-devops` blocks the server's tools), so it can no longer open PRs or
-  work items during research; and (b) approve-&-build now shows a confirmation dialog stating a branch + pull
-  request will be opened, so a PR is never started by a stray click. Remaining (not done): (i) approve-&-build
-  is still reachable by every (Microsoft-authenticated) viewer with only the requester recorded — once EasyAuth
-  lands, gate builds to the owner/devs and enforce it **server-side** (the confirmation dialog is client-only);
-  and (ii) the feature-BUILD and Code-Autopilot model calls still run with the ADO/GitHub MCP reachable (they
-  need MCP reads) — deny the MCP *write* tools (create/update PR, work item, issue) so only Saturn's REST code
-  ever creates those artifacts.
+- **Build-trigger authorization + MCP write-tool denial.** Approve-&-build is now gated by a confirmation
+  dialog, but that is client-side only and the endpoint is still reachable by any (Microsoft-authenticated)
+  viewer with only the requester recorded — once EasyAuth lands, gate builds to the owner/devs and enforce it
+  **server-side**. Separately, the feature-BUILD and Code-Autopilot model calls still run with the ADO/GitHub
+  MCP reachable (they need MCP reads); deny the MCP *write* tools (create/update PR, work item, issue) so only
+  Saturn's REST code ever creates those. (The read-only design agent is already fully MCP-denied.)
 - **Richer cross-session memory.** Retrieval is keyword/`LIKE`-based over artifact title+body; consider FTS5 or
   embeddings for better recall, and include prior chat messages (not just design docs).
 - **Chat store retention.** `chat.db` (conversations/messages/artifacts/feature_builds) grows unbounded — add a
@@ -120,9 +117,16 @@ follow-ups (not done):
   (transitive) — review and resolve or document it.
 - **Textarea polish.** The composer is a fixed 2-row textarea (Enter sends, Shift+Enter newlines); add
   auto-grow up to a max height for longer prompts.
-- **Faster chat load — shipped.** The ~3.4 MB mermaid bundle is no longer a blocking `<script>` in the page
-  head; it lazy-loads only when a design doc containing a diagram is opened, so the conversation list and chat
-  app render immediately (previously the whole app blocked on that download, especially over the tunnel).
+- **Export design doc to Loop (parked — feasibility done, blocked on environment).** LWS exposes
+  `POST /v0.1/workspaces/{workspaceId}/pages` (title + `content:{type:'raw', value:<markdown>}`; markdown
+  auto-converts to Loop content), and the signed-in `az` user already holds the delegated scope
+  `LoopWorkspaces.ReadWrite.All` (plus a SharePoint token). Not built because the service isn't reachable from
+  the host today: the token audience `api.loop.cloud.microsoft` has no A record and the `.com` data host fails
+  a TLS cert-principal check (needs corpnet/VPN or the correct gateway host), and it's unconfirmed whether LWS
+  accepts the Azure-CLI delegated token (client allowlist) vs. needing a registered app / pftpop allowlist
+  entry. When unblocked: add a conditional **Export to Loop** button — shown only when an LWS base URL is
+  configured and `GET /v0.1/health/ready` succeeds — that posts the doc's title + markdown and links the new
+  Loop page back into the chat.
 
 ## Setup installer & multi-repo
 

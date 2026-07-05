@@ -216,6 +216,7 @@ export function buildHtmlDocument(title: string, bodyHtml: string, mermaidScript
         `<style>${DOC_STYLES}</style>`,
         '</head><body>',
         bodyHtml,
+        '<footer style="margin-top:40px;padding-top:14px;border-top:1px solid rgba(127,127,127,.25);color:#8a93a6;font-size:12px;text-align:center;">Created by Saturn</footer>',
         mermaidInit,
         '</body></html>'
     ].join('\n');
