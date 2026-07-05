@@ -51,13 +51,23 @@ Every iteration (default every **10 minutes**, or **immediately** when an Azure 
 The agent **never merges PRs itself** and only ever pushes its own feature branches - humans (or branch policies) merge. The PRs it opens appear in the dashboard's **Code Autopilot** tab.
 - **Test coverage.** New/changed production logic lacking tests is flagged (major if risky, else minor), scoped strictly to the change delta — never pre-existing code, pure refactors, or non-unit-testable changes.
 
+## Builder Autopilot (on-demand design + feature build)
+
+Unlike the three always-on / standalone agents above, **Builder Autopilot** runs only when you use it, from the dashboard's **Builder Autopilot** tab.
+
+1. **Design turn (read-only).** You describe what you want; the design agent runs the Copilot CLI over the codebase in read-only mode and **streams live chain-of-thought** (its reasoning + which files it reads/searches) before the answer. It judges feasibility, proposes options, and produces a **design-document artifact** (markdown + mermaid) that is stored and can be copied as markdown or exported as HTML. On this path the Azure DevOps + GitHub MCP servers are **denied**, so the agent cannot open a PR, file a work item, or change anything while researching.
+2. **Approval gate.** A pull request is created **only after you explicitly approve** a design — the UI shows a confirmation dialog stating a branch and PR will be opened, so nothing is built by a stray click.
+3. **Feature build.** Approval hands the design to the feature-build pipeline (an extension of Code Autopilot): it branches off the latest default branch, implements the design, **self-validates twice**, lints, and opens a **PR linked back to the conversation** — surfaced both in the chat and on the Code Autopilot tab. It **never merges** its own PR.
+
+Prior design docs are reused as **cross-session memory** for later conversations, and every design doc carries a **"Created by Saturn"** watermark.
+
 ## Feedback
 
 Every posted comment includes a `Share feedback` link to the dashboard's feedback page, carrying the PR id and comment (thread) id. The feedback page captures the signed-in user (Azure AD identity when hosted behind EasyAuth, the git identity locally), a Helpful/Not-helpful rating, and a message. Submissions are stored and surfaced on the dashboard with a **deep link back to the exact comment** in the PR.
 
 ## Dashboard & control
 
-The dashboard opens on a **Dashboard** tab — an all-visual, **interactive Chart.js** leadership/manager overview (a live sweep-progress slider, KPI cards, and severity / category / lifecycle **doughnuts + bar charts** for the audit, plus review outcomes, a 14-day per-day trend, throughput, and file hotspots for the reviewer), assembled from a single `/api/dashboard` call and refreshed live. Two more tabs — **PR review** and **Codebase audit** — hold the detailed, filterable lists. The UI updates live via **Server-Sent Events** (no manual refresh). Anyone with access can view history and submit feedback; **Start/Stop is owner-only** — hidden in the UI for other viewers and rejected server-side (`403`) for anyone but the `SATURN_OWNER`.
+The dashboard opens on a **Dashboard** tab — an all-visual, **interactive Chart.js** leadership/manager overview (a live sweep-progress slider, KPI cards, and severity / category / lifecycle **doughnuts + bar charts** for the audit, plus review outcomes, a 14-day per-day trend, throughput, and file hotspots for the reviewer), assembled from a single `/api/dashboard` call and refreshed live. Further tabs — **PR review**, **Codebase audit**, **Code Autopilot**, **Documentation**, and **Builder Autopilot** — hold the detailed, filterable lists and the on-demand design-and-build surface. The UI updates live via **Server-Sent Events** (no manual refresh). Anyone with access can view history and submit feedback; **Start/Stop is owner-only** — hidden in the UI for other viewers and rejected server-side (`403`) for anyone but the `SATURN_OWNER`.
 
 ## The codebase audit loop
 

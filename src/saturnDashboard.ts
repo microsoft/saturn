@@ -613,7 +613,7 @@ const DASHBOARD_HTML = `<!doctype html>
     <button id="tabBtnAudit" class="tab-btn" type="button" role="tab">Codebase audit</button>
     <button id="tabBtnFix" class="tab-btn" type="button" role="tab">Code Autopilot</button>
     <button id="tabBtnDocs" class="tab-btn" type="button" role="tab">Documentation</button>
-    <button id="tabBtnChat" class="tab-btn" type="button" role="tab">Chat</button>
+    <button id="tabBtnChat" class="tab-btn" type="button" role="tab">Builder Autopilot</button>
   </div>
   <div id="tab-chat" style="display:none">
     <div id="chat-root"></div>

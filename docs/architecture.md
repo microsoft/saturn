@@ -1,6 +1,6 @@
 # Architecture
 
-Saturn is a single Node process: an HTTP **dashboard server** that hosts a controllable **review loop** and a parallel **codebase-audit loop**. Everything else (git, Azure CLI, the GitHub Copilot CLI, Azure DevOps) is reached by shelling out or over REST — there is no database and no framework.
+Saturn is a single Node process: an HTTP **dashboard server** that hosts a controllable **review loop**, a parallel **codebase-audit loop**, and an on-demand **Builder Autopilot** (chat) surface; **Code Autopilot** runs as its own standalone process. Everything else (git, Azure CLI, the GitHub Copilot CLI, Azure DevOps) is reached by shelling out or over REST — a few local stores use SQLite, but there is no server framework.
 
 ## Components (`src/`)
 
@@ -23,6 +23,11 @@ Saturn is a single Node process: an HTTP **dashboard server** that hosts a contr
 | `fixAgent.ts`          | Code Autopilot's per-bug pipeline: select/retry, generate, self-validate, open PR, and remediate all PR failures.      |
 | `fixStore.ts`          | SQLite store of Code Autopilot tasks (`~/.saturn/fix/fix.db`): status, cap counting, retries, restart recovery.        |
 | `fixStart.ts`          | Entry point for the standalone `saturn-autopilot` process.                                                             |
+| `chatService.ts`       | Builder Autopilot orchestration: runs a design turn, persists messages/artifacts, and (on approval) starts a feature build. |
+| `designAgent.ts`       | The conversational, **read-only** design agent: researches the repo, judges feasibility, proposes options, drafts the design doc (Azure DevOps + GitHub MCP write tools denied). |
+| `featureBuild.ts`      | Feature-build pipeline: approved design → branch → implement → self-validate twice → lint → open PR.                    |
+| `chatStore.ts`         | SQLite store for Builder Autopilot (`~/.saturn/chat/chat.db`): conversations, messages, design-doc artifacts, feature builds. |
+| `markdownRender.ts`    | Safe (escape-first) markdown → HTML for design docs + transcripts (preview, HTML export, watermark).                  |
 | `config.ts`            | Loads `.env`, exposes the Azure DevOps coordinates, and builds URL/feedback links.                                    |
 | `util.ts`              | Process spawning and logging helpers.                                                                                 |
 

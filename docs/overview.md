@@ -1,4 +1,4 @@
-# Saturn — an always-on engineering agent: codebase audit, PR review & Code Autopilot
+# Saturn — an always-on engineering agent: codebase audit, PR review, Code Autopilot & Builder Autopilot
 
 Saturn does three jobs continuously, without anyone having to ask:
 
@@ -6,7 +6,9 @@ Saturn does three jobs continuously, without anyone having to ask:
 2. It **reviews every new pull request** the moment it's pushed.
 3. It **fixes assigned bugs by opening pull requests** — a standalone agent that turns audit bugs into reviewed PRs.
 
-Think of it as a tireless senior engineer that never sleeps — sweeping the whole repository for long-standing risks, checking every change as it lands, and even drafting the fixes.
+And, on request, a fourth: **Builder Autopilot** designs and builds a new feature — you describe it, Saturn researches the codebase and drafts a design document, and after you approve, it opens the pull request.
+
+Think of it as a tireless senior engineer that never sleeps — sweeping the whole repository for long-standing risks, checking every change as it lands, drafting the fixes, and — when asked — designing and building new work.
 
 ## Codebase audit — finding the issues already in the code
 
@@ -35,6 +37,15 @@ Beyond finding and reviewing, Saturn can also **fix**. A standalone agent — **
 - **Fully isolated** — it runs as its own process against its own clone, so it never disturbs the audit or PR-review agents.
 - **Human-gated** — it never merges its own PRs; people (or branch policies) do.
 
+## Builder Autopilot — designing and building features on request
+
+The other three agents run on their own; **Builder Autopilot** works *with* you. From the dashboard's **Builder Autopilot** tab you describe what you want built, and the agent:
+
+- **Researches read-only and proposes a design** — it reads and searches the whole codebase to judge feasibility, proposes options, and produces a **design document** (markdown with diagrams) you can copy or export. During this step it can only read — it cannot open pull requests, file work items, or change anything.
+- **Builds only after you approve** — nothing is created until you explicitly approve a design; approval starts a build that opens a **pull request** (branch → implement → self-check twice → PR) for your review. As with Code Autopilot, a human always merges.
+
+It runs **on demand** (only while you're using it), so it consumes no capacity in the background.
+
 ## Why it matters
 
 - **Fixes what's already broken — not just new changes.** The audit surfaces long-standing risks across the whole codebase; the PR reviewer stops new ones at the door.
@@ -51,7 +62,7 @@ When hosted for a team behind an authenticating proxy, the dashboard is **view-o
 
 ## Trust & safety
 
-- **Read-only.** Saturn only comments and files bugs — it never edits code, commits, or changes a branch or PR.
+- **Read-only where it should be; human-gated everywhere else.** The audit and PR-review agents only comment and file bugs — they never change code. Code Autopilot and Builder Autopilot do open pull requests, but only ever their own branches, and **a human merges every one** — Saturn never merges its own PR, and Builder Autopilot never opens one without your explicit approval.
 - **Clearly labeled** as automated, and explicitly not an approval.
 - **Owner-only control** — anyone can watch, but only the owner can start or stop it.
 - **Never spams** — it won't post the same comment twice, won't log a duplicate bug, and clean PRs get nothing.

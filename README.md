@@ -1,6 +1,6 @@
 # Saturn
 
-An always-on, **repo-agnostic** autonomous engineering agent for **Azure DevOps**, powered by the **GitHub Copilot CLI**. Saturn runs three cooperating agents: a continuous **PR reviewer** (two-pass review + verified inline comments), a whole-**codebase security & privacy auditor**, and **Code Autopilot** (which opens and iterates pull requests to fix assigned bugs). A dashboard (http://localhost:6789) shows live status, history, and reviewer feedback.
+An always-on, **repo-agnostic** autonomous engineering agent for **Azure DevOps**, powered by the **GitHub Copilot CLI**. Saturn runs four cooperating agents: a continuous **PR reviewer** (two-pass review + verified inline comments), a whole-**codebase security & privacy auditor**, **Code Autopilot** (which opens and iterates pull requests to fix assigned bugs), and **Builder Autopilot** (an on-demand, conversational design agent that researches the codebase, drafts a design document, and — after explicit human approval — builds the feature as a pull request). A dashboard (http://localhost:6789) shows live status, history, and reviewer feedback.
 
 ## Highlights
 
@@ -28,6 +28,14 @@ A **second, parallel agent** continuously audits the **whole checked-out codebas
 - **SARIF export** at `/api/audit/sarif`. Findings are stored under `~/.saturn/audit/`; the list, bug-filing, and dismiss/recover are open to all viewers, while loop control (Start/Stop) stays owner-only.
 
 Routing works out of the box from `ownership.json`; the `SATURN_BUG_*` / `SATURN_AUDIT_*` env vars (see the table below) are optional overrides.
+
+## Builder Autopilot agent
+
+A fourth, **on-demand** agent lives on the dashboard's **"Builder Autopilot"** tab — a conversational design-and-build surface. It does **not** run in the background and only uses the model when you send a message.
+
+- **Conversational design** — describe what you want; the agent researches the **whole codebase read-only**, judges feasibility, proposes options, and streams a **design document** (markdown + mermaid) with live chain-of-thought. It **cannot** create pull requests, work items, branches, or commits while researching (the Azure DevOps + GitHub MCP servers are denied on this read-only path).
+- **Approve, then build** — a PR is only ever created after you **explicitly approve** a design (a confirmation dialog states a branch + pull request will be opened). Approval hands off to the **feature-build pipeline** — an extension of Code Autopilot from bugs to features: branch → implement → **self-validate twice** → lint → open a PR, surfaced in the chat and on the Code Autopilot tab. It never merges its own PR.
+- **Design docs** — every design doc can be **copied as markdown** or opened/exported as HTML, carries a **"Created by Saturn"** watermark, and prior design docs are reused as cross-session memory for new conversations.
 
 ## Documentation
 

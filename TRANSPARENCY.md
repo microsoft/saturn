@@ -8,12 +8,14 @@ inclusiveness).
 ## What Saturn is
 
 Saturn is an always-on, repo-agnostic autonomous engineering agent for Azure DevOps, built on the
-**GitHub Copilot CLI**. It runs three cooperating agents:
+**GitHub Copilot CLI**. It runs four cooperating agents:
 
 - **PR Reviewer** — reviews active pull requests and posts inline review comments.
 - **Codebase Auditor** — sweeps the checked-out codebase for security, privacy, correctness, and
   related issues and routes them to owning teams as bugs.
 - **Code Autopilot** — opens and iterates pull requests to fix assigned bugs.
+- **Builder Autopilot** — an on-demand conversational design agent that researches the codebase and
+  drafts a design document; after a human explicitly approves it, it builds the feature as a pull request.
 
 ## How it works
 
