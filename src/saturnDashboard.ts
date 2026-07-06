@@ -540,6 +540,10 @@ const DASHBOARD_HTML = `<!doctype html>
   .cot-toggle { font-size:11px; opacity:.7; }
   .cot-body { max-height:210px; overflow-y:auto; padding:8px 12px; border-top:1px solid var(--line,#232a44); font-family:'Cascadia Code',Consolas,monospace; }
   .cot-line { white-space:pre-wrap; word-break:break-word; opacity:.85; padding:1px 0; }
+  .chat-plan { border:1px solid var(--line,#232a44); border-radius:10px; background:rgba(41,82,227,.06); padding:10px 12px; font-size:13px; width:100%; }
+  .chat-plan-head { font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:var(--muted,#8b93b5); margin-bottom:6px; }
+  .chat-plan-item { padding:2px 0; color:var(--muted,#8b93b5); line-height:1.45; }
+  .chat-plan-item.done { color:var(--text,#e7ebf7); }
   .chat-md > :first-child { margin-top:0; } .chat-md > :last-child { margin-bottom:0; }
   .chat-md p { margin:0 0 8px; }
   .chat-md ul,.chat-md ol { margin:6px 0; padding-left:22px; }
@@ -2450,6 +2454,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var s16 = useState(''); var renameValue = s16[0], setRenameValue = s16[1];
     var s17 = useState(false); var mdCopied = s17[0], setMdCopied = s17[1];
     var s18 = useState(false); var owner = s18[0], setOwner = s18[1];
+    var s19 = useState([]); var plan = s19[0], setPlan = s19[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
@@ -2499,7 +2504,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     var doStream = useCallback(function (convId, text) {
       setStreaming(true); streamingRef.current = true; setStatusText('Sending'); setStreamReply(''); srRef.current = '';
-      setCot([]); setCotOpen(true);
+      setCot([]); setCotOpen(true); setPlan([]);
       var NL = String.fromCharCode(10);
       fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId: convId, message: text }) }).then(function (resp) {
         if (!resp.body) { throw new Error('no stream'); }
@@ -2530,6 +2535,7 @@ const DASHBOARD_HTML = `<!doctype html>
               if (ev === 'status') { setStatusText(data.text || ''); }
               else if (ev === 'title') { if (data.title) { setConvos(function (p) { return p.map(function (c) { return c.id === convId ? Object.assign({}, c, { title: data.title }) : c; }); }); } }
               else if (ev === 'cot') { setCot(function (p) { var n = p.concat([data.text || '']); return n.length > 200 ? n.slice(n.length - 200) : n; }); }
+              else if (ev === 'plan') { setPlan((data && data.items) || []); }
               else if (ev === 'delta') { setCotOpen(false); setStreamReply(function (p) { var nv = p + (data.text || ''); srRef.current = nv; return nv; }); }
               else if (ev === 'reset') { srRef.current = ''; setStreamReply(''); setCotOpen(true); }
               else if (ev === 'artifact') { if (data.artifact) { setArtifact(data.artifact); } }
@@ -2680,9 +2686,13 @@ const DASHBOARD_HTML = `<!doctype html>
       var live = h('div', { className: 'chat-live' }, h('div', { className: 'cot' }, cotHead, cotBody), streamReply ? h('div', { className: 'chat-bubble' }, streamReply, h('span', { className: 'caret' })) : null);
       liveEl = h('div', { key: 'live', className: 'chat-msg assistant' }, live);
     }
+    var planThreadEl = (plan && plan.length) ? h('div', { key: 'plan', className: 'chat-msg assistant' },
+      h('div', { className: 'chat-plan' },
+        h('div', { className: 'chat-plan-head' }, 'Plan'),
+        plan.map(function (it, i) { return h('div', { key: i, className: 'chat-plan-item' + (it.done ? ' done' : '') }, (it.done ? '\u2713 ' : '\u25cb ') + (it.text || '')); }))) : null;
     var thread = h('div', { className: 'chat-thread', ref: threadRef },
       (messages.length === 0 && !streaming) ? h('div', { key: 'w', className: 'chat-welcome' }, h('h3', null, 'Design & build with Saturn'), h('p', null, 'Describe what you want to design or build. Saturn researches the whole codebase, checks feasibility, proposes options, and can open a pull request - all reviewed by you.')) : null,
-      msgEls, liveEl);
+      msgEls, planThreadEl, liveEl);
     var docBar = (artifact && !docOpen) ? h('div', { className: 'chat-docbar' },
       h('button', { className: 'btn sm', onClick: function () { setDocOpen(true); } }, '\ud83d\udcc4 Open design document'),
       artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
@@ -4125,7 +4135,7 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     }, 3500);
     let result: Awaited<ReturnType<typeof handleChatTurn>>;
     try {
-      result = await handleChatTurn(conversationId, message.slice(0, 1_000_000), onProgress);
+      result = await handleChatTurn(conversationId, message.slice(0, 1_000_000), onProgress, (items) => { send('plan', { items }); });
     } catch {
       clearInterval(heartbeat);
       send('error', { text: 'The agent failed to respond. Please try again.' });

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { maxAutopilotContinues, REPO_DESCRIPTION } from './config';
 import { runCopilotReview } from './copilot';
 import type { ChatMessage, Conversation, DesignOption, Feasibility, RelatedArtifact } from './chatStore';
-import { savePlan } from './taskPlan';
+import { savePlan, type TaskPlanItem } from './taskPlan';
 import { describeError, type Logger } from './util';
 
 // The conversational design agent. It researches the repository READ-ONLY (via runCopilotReview, whose tool
@@ -59,6 +59,9 @@ const MAX_HISTORY_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 8000;
 // The user's current message can be large (e.g. a pasted spec / requirements doc); allow up to ~1MB.
 const MAX_USER_MESSAGE_CHARS = 1_000_000;
+// Saturn-orchestrated design passes: after each pass, if the model reports its plan is not complete, Saturn
+// re-invokes it to keep working through the remaining todo items - up to this many passes.
+const MAX_DESIGN_PASSES = 4;
 
 function truncate(text: string, max: number): string {
     return text.length <= max ? text : `${text.slice(0, max)}\n...[truncated]`;
@@ -121,7 +124,7 @@ function audienceGuidance(conversation: Conversation): string {
 // by the build pipeline, after the design is approved). Denying the whole server is verified to block its tools.
 const DENIED_MCP_SERVERS: readonly string[] = ['azure-devops', 'github-mcp-server'];
 
-function buildDesignPrompt(input: DesignTurnInput): string {
+function buildDesignPrompt(input: DesignTurnInput, continuation?: readonly TaskPlanItem[]): string {
     return [
         `You are Saturn's design agent for ${REPO_DESCRIPTION}. You have READ-ONLY access to the repository in your`,
         'current working directory: you may read and search any file to assess how a requested change would fit, but',
@@ -161,6 +164,15 @@ function buildDesignPrompt(input: DesignTurnInput): string {
         'NEW USER MESSAGE:',
         truncate(input.userMessage, MAX_USER_MESSAGE_CHARS),
         '',
+        ...(continuation !== undefined && continuation.length > 0
+            ? [
+                'CONTINUING A MULTI-STEP DESIGN - you already started this design. Your todo list so far is below; work',
+                'on the UNCHECKED items now, mark items done as you finish them, refine the design document, and set',
+                'complete:true ONLY when every item is done:',
+                continuation.map((it) => `- [${it.done ? 'x' : ' '}] ${it.text}`).join('\n'),
+                ''
+            ]
+            : []),
         'APPROACH: for a concrete design request, FIRST create a short todo list (the "plan") of the steps needed to',
         'research and design it fully, then work through them step by step (sequential thinking), iterating until',
         'every step is done before you finish. For simple questions or chit-chat, just answer (plan: [], complete: true).',
@@ -324,85 +336,8 @@ export async function generateTitle(
     }
 }
 
-/**
- * Run one design-agent turn: research the repo read-only, then return a structured reply, feasibility, any
- * options, and (when the request is concrete) a markdown design document. Never mutates the repository.
- */
-export async function runDesignTurn(
-    ctx: DesignAgentContext,
-    input: DesignTurnInput,
-    logger: Logger,
-    onProgress?: (chunk: string) => void
-): Promise<DesignTurnResult> {
-    const prompt = buildDesignPrompt(input);
-    let result;
-    try {
-        result = await runCopilotReview({
-            cliPath: ctx.cliPath,
-            prompt,
-            outputFormat: 'json',
-            model: ctx.model,
-            reasoningEffort: ctx.reasoningEffort,
-            cwd: ctx.repoRoot,
-            timeoutMs: ctx.timeoutMs,
-            extraDeniedTools: DENIED_MCP_SERVERS,
-            maxContinues: maxAutopilotContinues(),
-            ...(onProgress !== undefined ? { onProgress } : {})
-        });
-    } catch (error) {
-        logger.warn(`Design agent: Copilot invocation failed: ${describeError(error)}`);
-        return {
-            reply: 'Sorry - I could not complete that request just now (the model call failed). Please try again.',
-            options: [],
-            askAudience: false
-        };
-    }
-
-    if (result.status !== 0) {
-        logger.warn(`Design agent: Copilot exited ${String(result.status)}: ${truncate(result.stderr, 500)}`);
-        return {
-            reply: 'Sorry - I could not complete that request just now. Please try again.',
-            options: [],
-            askAudience: false
-        };
-    }
-
-    const assistantText = extractAssistantText(result.stdout);
-    const parsedOutput = parseReplyMeta(assistantText);
-    const jsonText = parsedOutput.meta !== '' ? extractJson(parsedOutput.meta) : undefined;
-    let meta: z.infer<typeof responseSchema> | undefined;
-    if (jsonText !== undefined) {
-        try {
-            const parsedMeta = responseSchema.safeParse(JSON.parse(jsonText));
-            if (parsedMeta.success) {
-                meta = parsedMeta.data;
-            }
-        } catch {
-            /* keep the plain reply; metadata is optional */
-        }
-    }
-    if (meta !== undefined && meta.plan !== null && meta.plan !== undefined) {
-        savePlan({
-            id: input.conversation.id,
-            kind: 'design',
-            goal: truncate(input.userMessage, 200),
-            items: meta.plan.map((p) => ({ text: p.text, done: p.done === true })),
-            complete: meta.complete === true,
-            iterations: 1,
-            updatedAt: new Date().toISOString()
-        });
-    }
-    let reply = parsedOutput.reply;
-    if (reply === '' && meta !== undefined && meta.reply !== null && meta.reply !== undefined) {
-        reply = meta.reply;
-    }
-    if (reply === '') {
-        return {
-            reply: 'Sorry - I did not produce a usable response. Please try again.',
-            options: [],
-            askAudience: false
-        };
-    }
+/** Build the structured turn result from the parsed reply + metadata (shared by every design pass). */
+function buildTurnResult(reply: string, meta: z.infer<typeof responseSchema> | undefined): DesignTurnResult {
     return {
         reply: reply !== '' ? reply : 'Done.',
         ...(meta !== undefined && meta.feasibility !== null && meta.feasibility !== undefined
@@ -423,4 +358,96 @@ export async function runDesignTurn(
             ? { suggestedTitle: meta.suggestedTitle.trim() }
             : {})
     };
+}
+
+/**
+ * Run a design turn as a Saturn-orchestrated, multi-pass loop: research read-only, produce a todo plan, and
+ * keep re-invoking the model to work through the remaining items (marking each done, surfacing the plan live
+ * via onPlan) until the model reports the plan complete or MAX_DESIGN_PASSES is reached. Never mutates the repo.
+ */
+export async function runDesignTurn(
+    ctx: DesignAgentContext,
+    input: DesignTurnInput,
+    logger: Logger,
+    onProgress?: (chunk: string) => void,
+    onPlan?: (items: readonly TaskPlanItem[]) => void
+): Promise<DesignTurnResult> {
+    const failure = (message: string): DesignTurnResult => ({ reply: message, options: [], askAudience: false });
+    let planItems: TaskPlanItem[] = [];
+    let lastTurn: DesignTurnResult | undefined;
+
+    for (let pass = 0; pass < MAX_DESIGN_PASSES; pass += 1) {
+        const prompt = buildDesignPrompt(input, pass === 0 ? undefined : planItems);
+        let result;
+        try {
+            result = await runCopilotReview({
+                cliPath: ctx.cliPath,
+                prompt,
+                outputFormat: 'json',
+                model: ctx.model,
+                reasoningEffort: ctx.reasoningEffort,
+                cwd: ctx.repoRoot,
+                timeoutMs: ctx.timeoutMs,
+                extraDeniedTools: DENIED_MCP_SERVERS,
+                maxContinues: maxAutopilotContinues(),
+                ...(onProgress !== undefined ? { onProgress } : {})
+            });
+        } catch (error) {
+            logger.warn(`Design agent: Copilot invocation failed: ${describeError(error)}`);
+            return lastTurn ?? failure('Sorry - I could not complete that request just now (the model call failed). Please try again.');
+        }
+        if (result.status !== 0) {
+            logger.warn(`Design agent: Copilot exited ${String(result.status)}: ${truncate(result.stderr, 500)}`);
+            return lastTurn ?? failure('Sorry - I could not complete that request just now. Please try again.');
+        }
+
+        const assistantText = extractAssistantText(result.stdout);
+        const parsedOutput = parseReplyMeta(assistantText);
+        const jsonText = parsedOutput.meta !== '' ? extractJson(parsedOutput.meta) : undefined;
+        let meta: z.infer<typeof responseSchema> | undefined;
+        if (jsonText !== undefined) {
+            try {
+                const parsedMeta = responseSchema.safeParse(JSON.parse(jsonText));
+                if (parsedMeta.success) {
+                    meta = parsedMeta.data;
+                }
+            } catch {
+                /* keep the plain reply; metadata is optional */
+            }
+        }
+        let reply = parsedOutput.reply;
+        if (reply === '' && meta !== undefined && meta.reply !== null && meta.reply !== undefined) {
+            reply = meta.reply;
+        }
+        if (reply === '' && meta === undefined) {
+            return lastTurn ?? failure('Sorry - I did not produce a usable response. Please try again.');
+        }
+
+        // Track + persist the plan (per-item done) outside the repo, and surface it live via onPlan.
+        if (meta !== undefined && meta.plan !== null && meta.plan !== undefined) {
+            planItems = meta.plan.map((p) => ({ text: p.text, done: p.done === true }));
+            savePlan({
+                id: input.conversation.id,
+                kind: 'design',
+                goal: truncate(input.userMessage, 200),
+                items: planItems,
+                complete: meta.complete === true,
+                iterations: pass + 1,
+                updatedAt: new Date().toISOString()
+            });
+            if (onPlan !== undefined && planItems.length > 0) {
+                onPlan(planItems);
+            }
+        }
+
+        lastTurn = buildTurnResult(reply, meta);
+
+        // Keep going only while the model says the plan is not complete AND items remain unchecked.
+        const hasPending = planItems.length > 0 && planItems.some((item) => !item.done);
+        const incomplete = meta !== undefined && meta.complete === false;
+        if (!incomplete || !hasPending) {
+            break;
+        }
+    }
+    return lastTurn ?? failure('Sorry - I did not produce a usable response. Please try again.');
 }

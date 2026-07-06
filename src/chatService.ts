@@ -6,6 +6,7 @@ import { ensureAdoMcpServer, resolveCopilotCli } from './copilot';
 import { ensureFeatureClone } from './git';
 import { type DesignAgentContext, generateTitle, runDesignTurn } from './designAgent';
 import { type FeatureBuildContext, runFeatureBuild } from './featureBuild';
+import { type TaskPlanItem } from './taskPlan';
 import {
     addMessage,
     type Artifact,
@@ -182,7 +183,8 @@ function upsertArtifact(
 export async function handleChatTurn(
     conversationId: string,
     userMessage: string,
-    onProgress?: (chunk: string) => void
+    onProgress?: (chunk: string) => void,
+    onPlan?: (items: readonly TaskPlanItem[]) => void
 ): Promise<ChatTurnResult | undefined> {
     let conversation = getConversation(conversationId);
     if (conversation === undefined) {
@@ -219,7 +221,7 @@ export async function handleChatTurn(
         timeoutMs: chatTimeoutMs()
     };
 
-    const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger, onProgress);
+    const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger, onProgress, onPlan);
 
     let artifact: Artifact | undefined;
     if (result.designDoc !== undefined) {
