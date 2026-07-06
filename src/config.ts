@@ -615,6 +615,26 @@ export function defaultReasoningEffort(): string {
   return value !== '' ? value : 'max';
 }
 
+/**
+ * Context-window tier passed to the Copilot CLI's --context flag: 'default' | 'long_context'. Defaults to
+ * 'long_context' (the largest window - ~1M tokens on opus-4.8) so every call has maximum context. Override
+ * with SATURN_CONTEXT_TIER.
+ */
+export function contextTier(): string {
+  const value = (process.env.SATURN_CONTEXT_TIER ?? '').trim();
+  return value !== '' ? value : 'long_context';
+}
+
+/**
+ * Max autonomous continuation messages (--max-autopilot-continues) for the agentic build/design calls, so the
+ * agent can work through its todo list and iterate until the task is done. Default 50. Override with
+ * SATURN_MAX_CONTINUES.
+ */
+export function maxAutopilotContinues(): number {
+  const parsed = Number.parseInt(process.env.SATURN_MAX_CONTINUES ?? '', 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? 50 : parsed;
+}
+
 // --- Code Autopilot (the standalone PR-authoring agent) --------------------------------------------------
 
 /**

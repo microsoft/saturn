@@ -3,7 +3,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { AZURE_DEVOPS_CONFIG } from './config';
+import { AZURE_DEVOPS_CONFIG, maxAutopilotContinues } from './config';
 import { runCopilotEdit, runCopilotReview } from './copilot';
 import { createPullRequest, getAzureDevOpsAuthHeader } from './ado';
 import { AUDIT_CATEGORIES } from './auditStore';
@@ -15,6 +15,7 @@ import {
     updateArtifact,
     updateFeatureBuild
 } from './chatStore';
+import { savePlan } from './taskPlan';
 import { describeError, type Logger } from './util';
 
 // The feature-build pipeline: the "Code Autopilot for features" step. It turns an APPROVED design-doc artifact
@@ -60,7 +61,7 @@ function extractJsonFromOutput(output: string): string | undefined {
 }
 
 /** Build the implementation prompt from the approved design doc and the chosen option. */
-function buildImplementPrompt(artifact: Artifact, selectedOption: string | undefined, feedback: string | undefined): string {
+function buildImplementPrompt(artifact: Artifact, selectedOption: string | undefined, feedback: string | undefined, plan: readonly string[] = []): string {
     const lines: string[] = [
         `You are Saturn's Code Autopilot implementing an APPROVED feature in the ${AZURE_DEVOPS_CONFIG.repositoryName} repository (your current working directory).`,
         'Implement the feature described in the DESIGN DOCUMENT below, following the repository\'s existing conventions,',
@@ -82,10 +83,17 @@ function buildImplementPrompt(artifact: Artifact, selectedOption: string | undef
         '- Follow the same coding standards the repository enforces (types, lint rules, error handling, accessibility).',
         '- Add or update tests where the repository expects them for new behavior.',
         '- Keep the change as small as it can be while fully delivering the feature.',
-        '',
-        'DESIGN DOCUMENT:',
-        artifact.markdown
+        '- Work step by step and ITERATE until the ENTIRE feature is implemented - do not stop after one step.',
+        ''
     );
+    if (plan.length > 0) {
+        lines.push(
+            'IMPLEMENTATION TODO LIST - complete these IN ORDER (sequential thinking); keep going until every item is done:',
+            ...plan.map((step, i) => `${String(i + 1)}. ${step}`),
+            ''
+        );
+    }
+    lines.push('DESIGN DOCUMENT:', artifact.markdown);
     if (feedback !== undefined && feedback.trim() !== '') {
         lines.push(
             '',
@@ -291,6 +299,47 @@ async function pushWithAuthRetry(cloneDir: string, branch: string, logger: Logge
     }
 }
 
+const planListSchema = z.object({ items: z.array(z.string()) });
+
+/**
+ * Break the approved design into an ordered implementation todo list via a read-only planning call, and
+ * persist it OUTSIDE the repo (savePlan) so the build has an explicit checklist to iterate through. Best-effort:
+ * on any failure it returns an empty list and the build proceeds without an explicit plan.
+ */
+async function planFeatureBuild(build: FeatureBuild, artifact: Artifact, ctx: FeatureBuildContext, logger: Logger): Promise<readonly string[]> {
+    const prompt = [
+        `You are Saturn's Code Autopilot about to implement an APPROVED feature in the ${AZURE_DEVOPS_CONFIG.repositoryName} repository.`,
+        'Read the DESIGN DOCUMENT below and break the implementation into an ORDERED todo list of concrete steps',
+        '(e.g. "add the X endpoint", "wire Y into Z", "add tests for W"). Keep it focused on delivering exactly this',
+        'feature. Respond with ONLY a JSON object: {"items": ["step 1", "step 2", ...]} and no prose outside the JSON.',
+        '',
+        ...(build.selectedOption !== undefined && build.selectedOption.trim() !== '' ? [`CHOSEN APPROACH: "${build.selectedOption}".`, ''] : []),
+        'DESIGN DOCUMENT:',
+        artifact.markdown
+    ].join('\n');
+    try {
+        const res = await runCopilotReview({
+            cliPath: ctx.cliPath,
+            prompt,
+            model: ctx.model,
+            reasoningEffort: ctx.reasoningEffort,
+            cwd: ctx.cloneDir,
+            timeoutMs: ctx.timeoutMs,
+            ...(ctx.allowMcpServerName !== undefined ? { allowMcpServerName: ctx.allowMcpServerName } : {})
+        });
+        const jsonText = extractJsonFromOutput(res.stdout);
+        if (jsonText !== undefined) {
+            const parsed = planListSchema.safeParse(JSON.parse(jsonText));
+            if (parsed.success) {
+                return parsed.data.items.map((s) => s.trim()).filter((s) => s !== '').slice(0, 40);
+            }
+        }
+    } catch (error) {
+        logger.warn(`Feature build: planning step failed (continuing without an explicit plan): ${describeError(error)}`);
+    }
+    return [];
+}
+
 /**
  * Run a feature build end-to-end: branch -> implement -> validate twice -> lint gate -> commit -> push -> PR.
  * Updates the FeatureBuild + Artifact records as it goes and posts the PR link back into the conversation.
@@ -307,14 +356,19 @@ export async function runFeatureBuild(
         updateArtifact(artifact.id, { status: 'building' });
         await createFixBranch(ctx.cloneDir, build.branch, logger);
 
-        updateFeatureBuild(build.id, { status: 'implementing', lastAction: 'implementing with Copilot' });
+        updateFeatureBuild(build.id, { status: 'implementing', lastAction: 'planning the build' });
+        const planItems = await planFeatureBuild(build, artifact, ctx, logger);
+        savePlan({ id: build.id, kind: 'build', goal: artifact.title, items: planItems.map((text) => ({ text, done: false })), complete: false, iterations: 0, updatedAt: new Date().toISOString() });
+
+        updateFeatureBuild(build.id, { lastAction: 'implementing with Copilot' });
         const edit = await runCopilotEdit({
             cliPath: ctx.cliPath,
-            prompt: buildImplementPrompt(artifact, build.selectedOption, undefined),
+            prompt: buildImplementPrompt(artifact, build.selectedOption, undefined, planItems),
             model: ctx.model,
             reasoningEffort: ctx.reasoningEffort,
             cwd: ctx.cloneDir,
             timeoutMs: ctx.timeoutMs,
+            maxContinues: maxAutopilotContinues(),
             ...(ctx.allowMcpServerName !== undefined ? { allowMcpServerName: ctx.allowMcpServerName } : {})
         });
         if (edit.status !== 0) {
@@ -348,6 +402,7 @@ export async function runFeatureBuild(
 
         updateFeatureBuild(build.id, { status: 'pr-open', prId: pr.id, prUrl: pr.url, lastAction: 'PR opened', lastError: null });
         updateArtifact(artifact.id, { status: 'built', buildTaskId: build.id });
+        savePlan({ id: build.id, kind: 'build', goal: artifact.title, items: planItems.map((text) => ({ text, done: true })), complete: true, iterations: 1, updatedAt: new Date().toISOString() });
         addMessage({
             conversationId: build.conversationId,
             role: 'assistant',

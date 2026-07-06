@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AZURE_DEVOPS_CONFIG, backupModel, modelFailureThreshold, primaryModel } from './config';
+import { AZURE_DEVOPS_CONFIG, backupModel, contextTier, modelFailureThreshold, primaryModel } from './config';
 import { isRecord, runCommand, runCommandAsync, type RunCommandResult } from './util';
 
 // --- Model fallback manager (in-memory, resets on restart) -----------------------------------------------
@@ -371,6 +371,8 @@ export interface RunCopilotReviewOptions {
   readonly allowMcpServerName?: string;
   /** Extra --deny-tool entries appended to the base deny list for this call (e.g. deny whole MCP servers). */
   readonly extraDeniedTools?: readonly string[];
+  /** Max autonomous continuation messages (--max-autopilot-continues); set for agentic build/design calls. */
+  readonly maxContinues?: number;
   /** When 'json', run the CLI with --output-format json --stream on (JSONL event stream for live CoT). */
   readonly outputFormat?: 'text' | 'json';
   /** Called with each raw CLI output chunk as it arrives, for live progress / chain-of-thought streaming. */
@@ -457,6 +459,12 @@ async function runCopilotWithDeniedTools(
 
     if (options.allowMcpServerName !== undefined) {
       baseArgs.push(`--allow-tool=${options.allowMcpServerName}`);
+    }
+    // Largest context window for every call (~1M tokens on opus). Agentic build/design calls also set a high
+    // continuation cap so the model can work through its todo list and iterate until the task is done.
+    baseArgs.push('--context', contextTier());
+    if (options.maxContinues !== undefined && options.maxContinues > 0) {
+      baseArgs.push('--max-autopilot-continues', String(options.maxContinues));
     }
     if (options.outputFormat === 'json') {
       // JSONL event stream: emits MCP/tool/turn events + assistant message deltas live (for the CoT UI).

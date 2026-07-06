@@ -81,7 +81,19 @@ implement → **self-validate twice** → lint → PR, surfaced in chat + on the
 now uses the full screen width consistently across every tab (stable scrollbar gutter, no tab-switch shift),
 and the design-doc panel becomes a full-height overlay on narrow screens instead of crushing the conversation
 thread; the doc panel offers **Copy markdown** (clipboard) and every served/exported doc carries a **"Created
-by Saturn"** watermark. Remaining follow-ups (not done):
+by Saturn"** watermark. For non-owner (devtunnel) viewers the tab is **read-only** — they can read and export
+design docs, but only the owner can chat, approve, and build (server-enforced). All Builder Autopilot calls
+run **opus-4.8 at max reasoning effort with the largest (~1M) context window**, and the design + feature-build
+agents **create a persisted todo list** (under `~/.saturn/chat/plans/`, outside the repo) and **iterate until
+it is done** (via the CLI's `--max-autopilot-continues` loop). Remaining follow-ups (not done):
+
+- **Saturn-orchestrated iteration + plan UI.** "Iterate until the todo list is done" currently relies on the
+  Copilot CLI's `--max-autopilot-continues` (the model auto-continues within one invocation) plus a persisted
+  plan; Saturn does not yet run its own multi-pass loop that re-invokes the model per pending item, and
+  per-item "done" tracking is coarse (a whole-plan `complete` flag). Follow-ups: a Saturn-level continue-loop
+  with per-item progress, and surfacing the todo checklist (from `~/.saturn/chat/plans/`) live in the UI.
+- **Title generation effort.** The dedicated title call still runs at low effort (kept fast) rather than max —
+  a deliberate exception to the "max thinking for all calls" default; make it configurable if desired.
 
 - **Remove the legacy vanilla chat JS.** The pre-React chat script still ships inside the dashboard HTML
   template literal as inert (unused) code — only `chatEsc` + `loadFeatureBuilds` are still needed. Delete the

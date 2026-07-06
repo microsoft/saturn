@@ -34,9 +34,8 @@ const logger: Logger = consoleLogger;
 
 function chatEffort(): string {
     const configured = (process.env.SATURN_CHAT_EFFORT ?? '').trim();
-    // Chat is interactive, so default to 'high' (fast + strong) rather than the agents' 'max'. Override with
-    // SATURN_CHAT_EFFORT.
-    return configured !== '' ? configured : 'high';
+    // Max thinking for Builder Autopilot too (opus-4.8 at max effort); override with SATURN_CHAT_EFFORT.
+    return configured !== '' ? configured : defaultReasoningEffort();
 }
 
 function chatTimeoutMs(): number {

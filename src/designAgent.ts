@@ -1,9 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 import { z } from 'zod';
-import { REPO_DESCRIPTION } from './config';
+import { maxAutopilotContinues, REPO_DESCRIPTION } from './config';
 import { runCopilotReview } from './copilot';
 import type { ChatMessage, Conversation, DesignOption, Feasibility, RelatedArtifact } from './chatStore';
+import { savePlan } from './taskPlan';
 import { describeError, type Logger } from './util';
 
 // The conversational design agent. It researches the repository READ-ONLY (via runCopilotReview, whose tool
@@ -160,12 +161,18 @@ function buildDesignPrompt(input: DesignTurnInput): string {
         'NEW USER MESSAGE:',
         truncate(input.userMessage, MAX_USER_MESSAGE_CHARS),
         '',
+        'APPROACH: for a concrete design request, FIRST create a short todo list (the "plan") of the steps needed to',
+        'research and design it fully, then work through them step by step (sequential thinking), iterating until',
+        'every step is done before you finish. For simple questions or chit-chat, just answer (plan: [], complete: true).',
+        '',
         'RESPOND IN EXACTLY TWO PARTS, IN THIS ORDER (the user already sees your live tool activity, so do NOT',
         'narrate a separate thinking section):',
         '1) Your conversational reply to the user in markdown - this is streamed live to the user as the answer.',
         '2) Then, on a NEW LINE, the EXACT marker [[META]] alone, followed by a single JSON object (no prose, no',
         '   code fence) with the structured result:',
         '{',
+        '  "plan": [ { "text": "todo step", "done": true|false } ],',
+        '  "complete": true|false,',
         '  "feasibility": "possible" | "not-possible" | "conditional" | null,',
         '  "reason": "why, especially if not-possible/conditional (or null)",',
         '  "options": [ { "label": "short name", "summary": "1-2 sentences", "recommended": true|false } ],',
@@ -184,6 +191,8 @@ const optionSchema = z.object({
 const responseSchema = z
     .object({
         reply: z.string().nullish(),
+        plan: z.array(z.object({ text: z.string(), done: z.boolean().nullish() })).nullish(),
+        complete: z.boolean().nullish(),
         feasibility: z.enum(['possible', 'not-possible', 'conditional']).nullish(),
         reason: z.string().nullish(),
         options: z.array(optionSchema).nullish(),
@@ -337,6 +346,7 @@ export async function runDesignTurn(
             cwd: ctx.repoRoot,
             timeoutMs: ctx.timeoutMs,
             extraDeniedTools: DENIED_MCP_SERVERS,
+            maxContinues: maxAutopilotContinues(),
             ...(onProgress !== undefined ? { onProgress } : {})
         });
     } catch (error) {
@@ -370,6 +380,17 @@ export async function runDesignTurn(
         } catch {
             /* keep the plain reply; metadata is optional */
         }
+    }
+    if (meta !== undefined && meta.plan !== null && meta.plan !== undefined) {
+        savePlan({
+            id: input.conversation.id,
+            kind: 'design',
+            goal: truncate(input.userMessage, 200),
+            items: meta.plan.map((p) => ({ text: p.text, done: p.done === true })),
+            complete: meta.complete === true,
+            iterations: 1,
+            updatedAt: new Date().toISOString()
+        });
     }
     let reply = parsedOutput.reply;
     if (reply === '' && meta !== undefined && meta.reply !== null && meta.reply !== undefined) {
