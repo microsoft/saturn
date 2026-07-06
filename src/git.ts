@@ -308,6 +308,28 @@ export async function createFixBranch(repoRoot: string, branch: string, logger: 
   }
 }
 
+/** Fetch and check out an EXISTING remote branch (e.g. a feature-build PR branch) to address review feedback. */
+export async function checkoutExistingBranch(repoRoot: string, branch: string, logger: Logger): Promise<void> {
+  const env = nonInteractiveGitEnv();
+  await runCommandAsync('git', ['-C', repoRoot, 'reset', '--hard'], { env, timeoutMs: 120_000 });
+  await runCommandAsync('git', ['-C', repoRoot, 'clean', '-fd'], { env, timeoutMs: 120_000 });
+  const fetchResult = await runCommandAsync('git', ['-C', repoRoot, 'fetch', '--depth', '1', 'origin', branch], {
+    env,
+    timeoutMs: 300_000
+  });
+  if (fetchResult.status !== 0) {
+    throw new Error(`Could not fetch origin/${branch}: ${fetchResult.stderr.trim() || 'unknown error'}`);
+  }
+  const result = await runCommandAsync('git', ['-C', repoRoot, 'checkout', '-B', branch, 'FETCH_HEAD'], {
+    env,
+    timeoutMs: 120_000
+  });
+  if (result.status !== 0) {
+    throw new Error(`Could not check out branch ${branch}: ${result.stderr.trim() || 'unknown error'}`);
+  }
+  logger.info(`Feature build: checked out existing branch ${branch} to address feedback.`);
+}
+
 /** Stage everything + commit. Returns true if a commit was made, false when there was nothing to commit. */
 export async function commitAllChanges(repoRoot: string, message: string, logger: Logger): Promise<boolean> {
   const env = nonInteractiveGitEnv();

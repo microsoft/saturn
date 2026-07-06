@@ -189,7 +189,8 @@ function buildDesignPrompt(input: DesignTurnInput, continuation?: readonly TaskP
         '  "reason": "why, especially if not-possible/conditional (or null)",',
         '  "options": [ { "label": "short name", "summary": "1-2 sentences", "recommended": true|false } ],',
         '  "askAudience": true|false,',
-        '  "designDoc": { "title": "short title", "markdown": "full design doc with mermaid" } | null',
+        '  "designDoc": { "title": "short title", "markdown": "full design doc with mermaid" } | null,',
+        '  "suggestedTitle": "a concise 3-6 word Title Case name for THIS conversation based on the request (or null)"',
         '}'
     ].join('\n');
 }
@@ -215,7 +216,7 @@ const responseSchema = z
     .loose();
 
 /** Extract the JSON object from model output (handles an optional ```json code fence). */
-function extractJson(output: string): string | undefined {
+export function extractJson(output: string): string | undefined {
     const fenceMatch = /```(?:json)?\s*([\s\S]*?)```/.exec(output);
     if (fenceMatch?.[1] !== undefined && fenceMatch[1].trim().startsWith('{')) {
         return fenceMatch[1].trim();
@@ -229,7 +230,7 @@ function extractJson(output: string): string | undefined {
 }
 
 /** Split the agent's reply text into the human reply and the trailing [[META]] JSON section. */
-function parseReplyMeta(output: string): { readonly reply: string; readonly meta: string } {
+export function parseReplyMeta(output: string): { readonly reply: string; readonly meta: string } {
     const metaIdx = output.indexOf('[[META]]');
     if (metaIdx === -1) {
         return { reply: output.trim(), meta: '' };
@@ -239,7 +240,7 @@ function parseReplyMeta(output: string): { readonly reply: string; readonly meta
 
 // Reconstruct the assistant's message text from the CLI's JSONL (--output-format json): concatenate non-empty
 // `assistant.message` contents. Falls back to the raw output for plain-text (non-JSON) mode.
-function extractAssistantText(output: string): string {
+export function extractAssistantText(output: string): string {
     const parts: string[] = [];
     let sawJsonEvent = false;
     for (const line of output.split('\n')) {
@@ -285,55 +286,6 @@ function toOptions(raw: z.infer<typeof responseSchema>['options']): readonly Des
         summary: option.summary,
         ...(option.recommended === true ? { recommended: true } : {})
     }));
-}
-
-/**
- * Generate a concise chat title from the first user message with a quick, low-effort model call - separate
- * from the main design turn, so a title can appear as soon as a conversation starts.
- */
-export async function generateTitle(
-    ctx: DesignAgentContext,
-    firstMessage: string,
-    logger: Logger
-): Promise<string | undefined> {
-    const prompt = [
-        'Generate a concise title for a chat conversation that begins with the user message below.',
-        'Do NOT use any tools and do NOT read or search any files - base the title ONLY on the message text.',
-        'Rules: at most 6 words, Title Case, describe the topic, no surrounding quotes, no trailing punctuation.',
-        'Reply with ONLY the title text and nothing else.',
-        '',
-        'USER MESSAGE:',
-        firstMessage.slice(0, 800)
-    ].join('\n');
-    try {
-        const result = await runCopilotReview({
-            cliPath: ctx.cliPath,
-            prompt,
-            outputFormat: 'json',
-            model: ctx.model,
-            reasoningEffort: 'low',
-            cwd: ctx.repoRoot,
-            timeoutMs: Math.min(ctx.timeoutMs, 120_000),
-            extraDeniedTools: DENIED_MCP_SERVERS
-        });
-        if (result.status !== 0) {
-            return undefined;
-        }
-        const nonEmptyLines = extractAssistantText(result.stdout).split('\n').map((line) => line.trim()).filter((line) => line !== '');
-        const firstLine = nonEmptyLines.length > 0 ? nonEmptyLines[nonEmptyLines.length - 1] : '';
-        const cleaned = firstLine
-            .replace(/^["'`\s]+/, '')
-            .replace(/["'`\s]+$/, '')
-            .replace(/[.!?,;:]+$/, '')
-            .split(/\s+/)
-            .slice(0, 8)
-            .join(' ')
-            .slice(0, 70);
-        return cleaned !== '' ? cleaned : undefined;
-    } catch (error) {
-        logger.warn(`Design agent: title generation failed: ${describeError(error)}`);
-        return undefined;
-    }
 }
 
 /** Build the structured turn result from the parsed reply + metadata (shared by every design pass). */

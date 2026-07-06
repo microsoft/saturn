@@ -29,7 +29,7 @@ import type { AuditFinding, AuditFindingFilter } from './auditStore';
 import { fixTaskStatusCounts, getFixScopePaths, listFixTasks, setFixScopePaths, signalFixWake } from './fixStore';
 import { readAllFeedback, recordFeedback } from './saturnStore';
 import { buildAuditSarifLog, buildSarifLog } from './sarif';
-import { consoleLogger, isRecord, runCommand } from './util';
+import { consoleLogger, describeError, isRecord, runCommand } from './util';
 import {
   createConversation,
   getArtifact,
@@ -38,9 +38,11 @@ import {
   listConversations,
   listFeatureBuilds,
   listMessages,
+  pruneChatStore,
   updateConversation
 } from './chatStore';
-import { approveAndBuild, generateTitleAsync, handleChatTurn } from './chatService';
+import { addressFeatureFeedback, approveAndBuild, exportArtifactToLoopService, handleChatTurn } from './chatService';
+import { loopExportStatus } from './loopExport';
 import { buildHtmlDocument, buildTranscriptDocument, escapeHtml, renderMarkdownToSafeHtml } from './markdownRender';
 
 const PORT = DASHBOARD_PORT;
@@ -562,7 +564,7 @@ const DASHBOARD_HTML = `<!doctype html>
   .chat-modal-actions { display:flex; justify-content:flex-end; gap:8px; }
   .chat-docbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line,#232a44); background:rgba(41,82,227,.06); }
   .chat-composer { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line,#232a44); align-items:flex-end; }
-  .chat-input { flex:1; resize:none; max-height:160px; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
+  .chat-input { flex:1; resize:none; min-height:58px; max-height:160px; overflow-y:auto; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
   .chat-input:focus { outline:none; border-color:#3168ff; }
   .chat-splitter { flex:0 0 6px; cursor:col-resize; background:transparent; transition:background .15s; }
   .chat-splitter:hover { background:rgba(41,82,227,.35); }
@@ -2167,200 +2169,18 @@ const DASHBOARD_HTML = `<!doctype html>
   loadModel();
   setInterval(loadModel, 15000);
 
-  // ---- Chat tab (conversational design + feature building) ----
-  var chatConvId = null;
-  var chatArtifactKey = null;
-  var chatMsgCount = -1;
-  var chatPollTimer = null;
-  var mermaidReady = false;
-
+  // ---- Shared chat helpers (used by the React Builder Autopilot app + the feature-builds table) ----
   function chatEsc(s) { var d = document.createElement('div'); d.textContent = (s == null ? '' : String(s)); return d.innerHTML; }
 
-  function ensureMermaid() {
-    if (mermaidReady || !window.mermaid) { return; }
-    try {
-      var isLight = document.documentElement.getAttribute('data-theme') === 'light' || document.body.classList.contains('light');
-      window.mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: isLight ? 'default' : 'dark' });
-      mermaidReady = true;
-    } catch (e) {}
+  var __fbOwner = false;
+  fetch('/api/whoami').then(function (r) { return r.json(); }).then(function (w) { __fbOwner = !!(w && w.isOwner); }).catch(function () {});
+  function addrFeatureFeedback(id, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Working...'; }
+    fetch('/api/chat/build/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ buildId: id }) })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) { if (btn) { btn.textContent = res.ok ? 'Queued \u2713' : ((res.j && res.j.message) || 'Failed'); } setTimeout(loadFeatureBuilds, 2000); })
+      .catch(function () { if (btn) { btn.textContent = 'Failed'; btn.disabled = false; } });
   }
-
-  function renderMermaidIn(container) {
-    if (!window.mermaid) { return; }
-    ensureMermaid();
-    var blocks = Array.prototype.slice.call(container.querySelectorAll('pre.mermaid'));
-    if (!blocks.length) { return; }
-    try { window.mermaid.run({ nodes: blocks, suppressErrors: true }); } catch (e) {}
-  }
-
-  function loadConversations() {
-    fetch('/api/chat/conversations').then(function (r) { return r.json(); }).then(function (data) {
-      var list = document.getElementById('chatConvList');
-      if (!list) { return; }
-      list.innerHTML = '';
-      var convs = (data && data.conversations) || [];
-      if (!convs.length) {
-        var empty = document.createElement('div'); empty.className = 'chat-empty'; empty.textContent = 'No conversations yet.'; list.appendChild(empty);
-      }
-      convs.forEach(function (c) {
-        var item = document.createElement('div');
-        item.className = 'chat-conv' + (c.id === chatConvId ? ' active' : '');
-        item.textContent = c.title || 'New chat';
-        item.title = (c.mode === 'spec' ? '[spec] ' : '') + (c.title || '');
-        item.onclick = function () { openConversation(c.id); };
-        list.appendChild(item);
-      });
-    }).catch(function () {});
-  }
-
-  function createChat(mode, afterText) {
-    apost('/api/chat/conversations', { mode: mode }).then(function (resp) {
-      if (resp && resp.conversation) {
-        chatConvId = resp.conversation.id;
-        chatArtifactKey = null; chatMsgCount = -1;
-        loadConversations();
-        if (afterText) { doSend(afterText); } else { openConversation(resp.conversation.id); }
-      }
-    }).catch(function () {});
-  }
-  function newChat() { createChat('design', null); }
-  function newSpecChat() { createChat('spec', null); }
-
-  function openConversation(id) {
-    chatConvId = id; chatArtifactKey = null; chatMsgCount = -1;
-    loadConversations();
-    fetch('/api/chat/conversation?id=' + encodeURIComponent(id)).then(function (r) { return r.json(); }).then(function (data) {
-      renderThread((data && data.messages) || []);
-      renderArtifact((data && data.artifact) || null);
-      var dl = document.getElementById('chatTranscriptBtn'); if (dl) { dl.style.display = ''; }
-    }).catch(function () {});
-    if (!chatPollTimer) {
-      chatPollTimer = setInterval(function () {
-        if (document.getElementById('tab-chat').style.display !== 'none' && chatConvId) { refreshConversation(); }
-      }, 5000);
-    }
-  }
-
-  function refreshConversation() {
-    if (!chatConvId) { return; }
-    fetch('/api/chat/conversation?id=' + encodeURIComponent(chatConvId)).then(function (r) { return r.json(); }).then(function (data) {
-      var msgs = (data && data.messages) || [];
-      if (msgs.length !== chatMsgCount) { renderThread(msgs); }
-      if (data && data.artifact) { renderArtifact(data.artifact); }
-    }).catch(function () {});
-  }
-
-  function renderThread(messages) {
-    var thread = document.getElementById('chatThread');
-    if (!thread) { return; }
-    chatMsgCount = messages.length;
-    thread.innerHTML = '';
-    messages.filter(function (m) { return m.role !== 'system'; }).forEach(function (m) {
-      var row = document.createElement('div'); row.className = 'chat-msg ' + (m.role === 'user' ? 'user' : 'assistant');
-      var bubble = document.createElement('div'); bubble.className = 'chat-bubble';
-      bubble.textContent = m.content;
-      row.appendChild(bubble);
-      thread.appendChild(row);
-    });
-    thread.scrollTop = thread.scrollHeight;
-  }
-
-  function renderArtifact(artifact) {
-    var pane = document.getElementById('chatDoc');
-    if (!pane) { return; }
-    if (!artifact) {
-      if (chatArtifactKey === null) { return; }
-      chatArtifactKey = null;
-      pane.innerHTML = '<div class="chat-empty">The design document will appear here once the agent drafts one.</div>';
-      return;
-    }
-    var key = artifact.id + ':' + artifact.updatedAt + ':' + (artifact.status || '');
-    if (key === chatArtifactKey) { return; }
-    chatArtifactKey = key;
-    pane.innerHTML = '';
-    var head = document.createElement('div'); head.className = 'chat-doc-head';
-    var h = document.createElement('div'); h.className = 'chat-doc-title'; h.textContent = artifact.title || 'Design document'; head.appendChild(h);
-    if (artifact.feasibility) { var badge = document.createElement('span'); badge.className = 'feas ' + artifact.feasibility; badge.textContent = artifact.feasibility; head.appendChild(badge); }
-    pane.appendChild(head);
-
-    var actions = document.createElement('div'); actions.className = 'chat-doc-actions';
-    function dlBtn(label, suffix) { var b = document.createElement('button'); b.className = 'btn sm ghost'; b.textContent = label; b.onclick = function () { window.open('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + suffix, '_blank'); }; return b; }
-    actions.appendChild(dlBtn('Download .md', '&format=md&download=1'));
-    actions.appendChild(dlBtn('Download .html', '&format=html&download=1'));
-    actions.appendChild(dlBtn('Open HTML', '&format=html'));
-    pane.appendChild(actions);
-
-    var build = document.createElement('div'); build.className = 'chat-doc-build';
-    if (artifact.feasibility === 'not-possible') {
-      var no = document.createElement('div'); no.className = 'muted-note'; no.textContent = 'Marked not feasible - refine the request before building.'; build.appendChild(no);
-    } else if (artifact.status === 'building' || artifact.status === 'approved') {
-      var st0 = document.createElement('span'); st0.className = 'muted-note'; st0.textContent = 'Build in progress - see the Code Autopilot tab.'; build.appendChild(st0);
-    } else if (artifact.status === 'built') {
-      var st1 = document.createElement('span'); st1.className = 'muted-note'; st1.textContent = 'Built - a pull request was opened.'; build.appendChild(st1);
-    } else {
-      var opts = artifact.options || [];
-      if (opts.length > 1) {
-        var lbl = document.createElement('div'); lbl.className = 'muted-note'; lbl.style.width = '100%'; lbl.textContent = 'Choose an approach to build:'; build.appendChild(lbl);
-        opts.forEach(function (o) { var ob = document.createElement('button'); ob.className = 'btn sm'; ob.textContent = (o.recommended ? '\u2605 ' : '') + o.label; ob.title = o.summary || ''; ob.onclick = function () { approveBuild(artifact.id, o.label, false); }; build.appendChild(ob); });
-        var best = document.createElement('button'); best.className = 'btn sm ghost'; best.textContent = 'Build best option'; best.onclick = function () { approveBuild(artifact.id, null, true); }; build.appendChild(best);
-      } else {
-        var only = (opts[0] && opts[0].label) ? opts[0].label : null;
-        var ap = document.createElement('button'); ap.className = 'btn sm'; ap.textContent = 'Approve & build'; ap.onclick = function () { approveBuild(artifact.id, only, false); }; build.appendChild(ap);
-      }
-    }
-    pane.appendChild(build);
-
-    var body = document.createElement('div'); body.className = 'chat-doc-body'; body.id = 'chatDocBody';
-    body.textContent = 'Rendering...';
-    pane.appendChild(body);
-    fetch('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + '&format=fragment').then(function (r) { return r.text(); }).then(function (html) {
-      body.innerHTML = html; renderMermaidIn(body);
-    }).catch(function () { body.textContent = '(could not render the document)'; });
-  }
-
-  function approveBuild(artifactId, option, best) {
-    var payload = { conversationId: chatConvId, artifactId: artifactId };
-    if (option) { payload.selectedOption = option; }
-    if (best) { payload.proceedWithBest = true; }
-    apost('/api/chat/approve', payload).then(function () { chatArtifactKey = null; refreshConversation(); }).catch(function () {});
-  }
-
-  function sendChatMessage() {
-    var input = document.getElementById('chatInput');
-    if (!input) { return; }
-    var text = (input.value || '').trim();
-    if (!text) { return; }
-    if (!chatConvId) { createChat('design', text); input.value = ''; return; }
-    doSend(text);
-  }
-
-  function doSend(text) {
-    var input = document.getElementById('chatInput');
-    var sendBtn = document.getElementById('chatSend');
-    var thread = document.getElementById('chatThread');
-    if (thread) {
-      if (chatMsgCount < 0) { thread.innerHTML = ''; chatMsgCount = 0; }
-      var row = document.createElement('div'); row.className = 'chat-msg user'; var b = document.createElement('div'); b.className = 'chat-bubble'; b.textContent = text; row.appendChild(b); thread.appendChild(row);
-      var tr = document.createElement('div'); tr.className = 'chat-msg assistant'; var tb = document.createElement('div'); tb.className = 'chat-bubble'; tb.textContent = 'Researching the codebase...'; tr.appendChild(tb); thread.appendChild(tr);
-      thread.scrollTop = thread.scrollHeight;
-    }
-    if (input) { input.value = ''; input.disabled = true; }
-    if (sendBtn) { sendBtn.disabled = true; }
-    apost('/api/chat/message', { conversationId: chatConvId, message: text }).then(function (resp) {
-      if (input) { input.disabled = false; }
-      if (sendBtn) { sendBtn.disabled = false; }
-      if (resp && resp.messages) { renderThread(resp.messages); }
-      if (resp && resp.artifact) { renderArtifact(resp.artifact); }
-      loadConversations();
-      if (input) { input.focus(); }
-    }).catch(function () {
-      if (input) { input.disabled = false; }
-      if (sendBtn) { sendBtn.disabled = false; }
-    });
-  }
-
-  function downloadTranscript() { if (chatConvId) { window.open('/api/chat/transcript?id=' + encodeURIComponent(chatConvId) + '&format=html', '_blank'); } }
-
   function loadFeatureBuilds() {
     fetch('/api/chat/builds').then(function (r) { return r.json(); }).then(function (data) {
       var builds = (data && data.builds) || [];
@@ -2374,20 +2194,12 @@ const DASHBOARD_HTML = `<!doctype html>
       if (!builds.length) { host.innerHTML = ''; return; }
       var rows = builds.map(function (b) {
         var pr = b.prUrl ? ('<a href="' + chatEsc(b.prUrl) + '" target="_blank" rel="noopener">PR !' + chatEsc(String(b.prId)) + '</a>') : '';
-        return '<tr><td>' + chatEsc(b.title) + '</td><td>' + chatEsc(b.status) + '</td><td>' + chatEsc(b.lastAction || '') + '</td><td>' + pr + '</td></tr>';
+        var addr = (b.status === 'pr-open' && __fbOwner) ? ' <button class="btn sm" onclick="addrFeatureFeedback(&#39;' + chatEsc(b.id) + '&#39;, this)">Address feedback</button>' : '';
+        return '<tr><td>' + chatEsc(b.title) + '</td><td>' + chatEsc(b.status) + '</td><td>' + chatEsc(b.lastAction || '') + '</td><td>' + pr + addr + '</td></tr>';
       }).join('');
       host.innerHTML = '<div class="section-head"><h2>Feature builds</h2><span class="count-chip">' + builds.length + '</span></div><table class="fx-table"><thead><tr><th>Feature</th><th>Status</th><th>Step</th><th>PR</th></tr></thead><tbody>' + rows + '</tbody></table>';
     }).catch(function () {});
   }
-
-  (function () {
-    var nb = document.getElementById('chatNewBtn'); if (nb) { nb.onclick = newChat; }
-    var nsb = document.getElementById('chatNewSpecBtn'); if (nsb) { nsb.onclick = newSpecChat; }
-    var sb2 = document.getElementById('chatSend'); if (sb2) { sb2.onclick = sendChatMessage; }
-    var tb2 = document.getElementById('chatTranscriptBtn'); if (tb2) { tb2.onclick = downloadTranscript; }
-    var ci = document.getElementById('chatInput');
-    if (ci) { ci.onkeydown = function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChatMessage(); } }; }
-  })();
 
   // ---- React-based Chat tab: streaming, resizable panels, on-demand design-doc view ----
   var __chatMermaidReady = false;
@@ -2455,12 +2267,14 @@ const DASHBOARD_HTML = `<!doctype html>
     var s17 = useState(false); var mdCopied = s17[0], setMdCopied = s17[1];
     var s18 = useState(false); var owner = s18[0], setOwner = s18[1];
     var s19 = useState([]); var plan = s19[0], setPlan = s19[1];
+    var s20 = useState(false); var loopOk = s20[0], setLoopOk = s20[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
     var streamingRef = useRef(false);
     var srRef = useRef('');
     var cotRef = useRef(null);
+    var composerRef = useRef(null);
 
     var loadConvos = useCallback(function () {
       fetch('/api/chat/conversations').then(function (r) { return r.json(); }).then(function (d) { setConvos((d && d.conversations) || []); }).catch(function () {});
@@ -2474,6 +2288,7 @@ const DASHBOARD_HTML = `<!doctype html>
 
     useEffect(function () { loadConvos(); }, [loadConvos]);
     useEffect(function () { fetch('/api/whoami').then(function (r) { return r.json(); }).then(function (w) { setOwner(!!w.isOwner); }).catch(function () {}); }, []);
+    useEffect(function () { fetch('/api/chat/loop/status').then(function (r) { return r.json(); }).then(function (d) { setLoopOk(!!(d && d.available)); }).catch(function () {}); }, []);
     useEffect(function () {
       if (!currentId) { setMessages([]); setArtifact(null); setDocOpen(false); return; }
       fetch('/api/chat/conversation?id=' + encodeURIComponent(currentId)).then(function (r) { return r.json(); }).then(function (d) {
@@ -2483,6 +2298,7 @@ const DASHBOARD_HTML = `<!doctype html>
     }, [currentId]);
     useEffect(function () { var el = threadRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [messages, streamReply, statusText, streaming]);
     useEffect(function () { var el = cotRef.current; if (el) { el.scrollTop = el.scrollHeight; } }, [cot]);
+    useEffect(function () { var el = composerRef.current; if (el) { el.style.height = 'auto'; el.style.height = Math.min(el.scrollHeight, 160) + 'px'; } }, [draft]);
     useEffect(function () {
       if (!docOpen || !artifact) { setDocHtml(''); return; }
       fetch('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + '&format=fragment').then(function (r) { return r.text(); }).then(function (html) { setDocHtml(html); }).catch(function () { setDocHtml('<div class="chat-empty">Could not render the document.</div>'); });
@@ -2628,6 +2444,12 @@ const DASHBOARD_HTML = `<!doctype html>
     }
 
     function docBtn(label, suffix) { return h('button', { key: label, className: 'btn sm ghost', onClick: function () { window.open('/api/chat/artifact?id=' + encodeURIComponent(artifact.id) + suffix, '_blank'); } }, label); }
+    function exportLoop() {
+      fetch('/api/chat/loop/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artifactId: artifact.id }) })
+        .then(function (r) { return r.json(); })
+        .then(function (j) { if (j && j.url) { window.open(j.url, '_blank'); } refreshConversation(currentId); })
+        .catch(function () {});
+    }
     function docPanel() {
       var build;
       if (artifact.feasibility === 'not-possible') { build = h('div', { className: 'muted-note' }, 'Marked not feasible - refine the request before building.'); }
@@ -2652,7 +2474,8 @@ const DASHBOARD_HTML = `<!doctype html>
           h('button', { className: 'chat-x', title: 'Close', onClick: function () { setDocOpen(false); } }, '\u00d7')
         ),
         h('div', { className: 'chat-doc-actions2' }, h('button', { key: 'cpy', className: 'btn sm ghost', onClick: copyMarkdown }, mdCopied ? '\u2713 Copied' : 'Copy markdown'), docBtn('Download .html', '&format=html&download=1'), docBtn('Open HTML', '&format=html'),
-          h('button', { key: 'tr', className: 'btn sm ghost', onClick: function () { window.open('/api/chat/transcript?id=' + encodeURIComponent(currentId) + '&format=html', '_blank'); } }, 'Transcript')),
+          h('button', { key: 'tr', className: 'btn sm ghost', onClick: function () { window.open('/api/chat/transcript?id=' + encodeURIComponent(currentId) + '&format=html', '_blank'); } }, 'Transcript'),
+          (owner && loopOk) ? h('button', { key: 'loop', className: 'btn sm ghost', onClick: exportLoop }, 'Export to Loop') : null),
         h('div', { className: 'chat-doc-build2' }, build),
         h('div', { className: 'chat-doc-scroll' }, h('div', { className: 'cbody', ref: docBodyRef, dangerouslySetInnerHTML: { __html: docHtml || 'Rendering...' } }))
       );
@@ -2699,7 +2522,7 @@ const DASHBOARD_HTML = `<!doctype html>
       h('span', { className: 'muted-note' }, artifact.title || '')) : null;
     var composer = owner
       ? h('div', { className: 'chat-composer' },
-        h('textarea', { className: 'chat-input', rows: 2, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
+        h('textarea', { className: 'chat-input', rows: 2, ref: composerRef, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
           onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
         h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send'))
       : h('div', { className: 'chat-composer' }, h('span', { className: 'muted', style: { fontSize: '13px' } }, '\ud83d\udd12 Read-only view \u2014 only the owner can design & build here.'));
@@ -2955,6 +2778,16 @@ function inlineMermaidScript(): string {
       ? '<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>'
       : `<script>${bundle.replace(/<\/script/gi, '<\\/script')}</script>`;
   return cachedInlineMermaid;
+}
+
+// Choose the mermaid <script> for a standalone document: NONE when the body has no diagram (so a diagram-free
+// download never carries the ~3.4MB bundle), the inlined bundle for offline downloads, or the shared
+// same-origin /vendor script for the in-browser view.
+function mermaidScriptFor(bodyHtml: string, download: boolean): string {
+  if (!bodyHtml.includes('class="mermaid"')) {
+    return '';
+  }
+  return download ? inlineMermaidScript() : '<script src="/vendor/mermaid.min.js"></script>';
 }
 
 // Slugify a title into a safe download filename (letters/digits/dashes, bounded).
@@ -3967,18 +3800,16 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       }
     };
-    // Title: when the conversation has no real title yet, show an instant provisional title (first few words),
-    // persist it, then kick off a dedicated quick LLM call for a better one. Turns on an already-titled
-    // conversation never change the title.
+    // Title: when the conversation has no real title yet, show an instant provisional title (first few words)
+    // and persist it. The AI-refined title comes from THIS turn's design call below (no separate LLM call).
+    // Turns on an already-titled conversation never change the title.
     const startConv = getConversation(conversationId);
+    let provisionalTitle = '';
     if (startConv !== undefined && (startConv.title === 'New chat' || startConv.title.trim() === '')) {
-      const provisional = message.trim().split(/\s+/).slice(0, 7).join(' ').slice(0, 60);
-      if (provisional !== '') {
-        updateConversation(conversationId, { title: provisional });
-        send('title', { title: provisional });
-        generateTitleAsync(conversationId, message, provisional, (title) => {
-          send('title', { title });
-        });
+      provisionalTitle = message.trim().split(/\s+/).slice(0, 7).join(' ').slice(0, 60);
+      if (provisionalTitle !== '') {
+        updateConversation(conversationId, { title: provisionalTitle });
+        send('title', { title: provisionalTitle });
       }
     }
     send('status', { text: 'Researching the codebase' });
@@ -4002,9 +3833,27 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         lastActivity = Date.now();
       }
     };
+    // Raw model reasoning can be very verbose; keep the "thought process" readable by dropping trivially short
+    // fragments + exact consecutive duplicates and capping how many reasoning lines stream per turn. Concise
+    // tool / MCP activity labels are NOT throttled (they go through cot() directly).
+    let lastReasoningText = '';
+    let reasoningEmitted = 0;
+    const MAX_REASONING_LINES = 60;
+    const cotReasoning = (text: string): void => {
+      const t = text.trim();
+      if (t.length < 3 || t === lastReasoningText) {
+        return;
+      }
+      lastReasoningText = t;
+      if (reasoningEmitted >= MAX_REASONING_LINES) {
+        return;
+      }
+      reasoningEmitted += 1;
+      cot(t);
+    };
     const flushReasoning = (): void => {
       if (reasoningLine.trim() !== '') {
-        cot(reasoningLine);
+        cotReasoning(reasoningLine);
       }
       reasoningLine = '';
     };
@@ -4073,14 +3922,14 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         reasoningLine += asStr(data['deltaContent']);
         let nlAt = reasoningLine.indexOf('\n');
         while (nlAt >= 0) {
-          cot(reasoningLine.slice(0, nlAt));
+          cotReasoning(reasoningLine.slice(0, nlAt));
           reasoningLine = reasoningLine.slice(nlAt + 1);
           nlAt = reasoningLine.indexOf('\n');
         }
         if (reasoningLine.length > 180) {
           const cut = reasoningLine.lastIndexOf(' ', 180);
           const at = cut > 40 ? cut : 180;
-          cot(reasoningLine.slice(0, at));
+          cotReasoning(reasoningLine.slice(0, at));
           reasoningLine = reasoningLine.slice(at);
         }
         return;
@@ -4170,9 +4019,23 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
         }
       }
     }
+    // Refine the instant provisional title with the AI-suggested title from THIS turn (no extra CLI call),
+    // unless the user renamed the conversation in the meantime.
+    if (
+      provisionalTitle !== '' &&
+      result.suggestedTitle !== undefined &&
+      result.suggestedTitle !== '' &&
+      result.suggestedTitle !== provisionalTitle
+    ) {
+      const nowConv = getConversation(conversationId);
+      if (nowConv !== undefined && nowConv.title === provisionalTitle) {
+        updateConversation(conversationId, { title: result.suggestedTitle });
+        send('title', { title: result.suggestedTitle });
+      }
+    }
     send('done', {
       conversationId,
-      title: result.conversation.title,
+      title: getConversation(conversationId)?.title ?? result.conversation.title,
       ...(result.artifact !== undefined ? { artifact: result.artifact } : {})
     });
     res.end();
@@ -4238,8 +4101,8 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       res.end(renderMarkdownToSafeHtml(artifact.markdown) + '<footer style="margin-top:32px;padding-top:12px;border-top:1px solid var(--line,#232a44);color:var(--muted,#8b93b5);font-size:12px;text-align:center;">Created by Saturn</footer>');
       return;
     }
-    const mermaidScript = download ? inlineMermaidScript() : '<script src="/vendor/mermaid.min.js"></script>';
     const body = `<h1>${escapeHtml(artifact.title)}</h1>\n${renderMarkdownToSafeHtml(artifact.markdown)}`;
+    const mermaidScript = mermaidScriptFor(body, download);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       ...(download ? { 'Content-Disposition': `attachment; filename="${fileName}.html"` } : {})
@@ -4255,11 +4118,13 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
       sendJson(res, 404, { error: 'not found' });
       return;
     }
+    const transcriptMessages = listMessages(id);
+    const transcriptHasMermaid = transcriptMessages.some((message) => message.content.includes('```mermaid'));
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Disposition': `attachment; filename="${artifactFileName(conversation.title)}-transcript.html"`
     });
-    res.end(buildTranscriptDocument(conversation.title, listMessages(id), inlineMermaidScript()));
+    res.end(buildTranscriptDocument(conversation.title, transcriptMessages, transcriptHasMermaid ? inlineMermaidScript() : ''));
     return;
   }
   if (method === 'POST' && pathname === '/api/chat/approve') {
@@ -4296,9 +4161,56 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
     sendJson(res, 200, result);
     return;
   }
+  if (method === 'POST' && pathname === '/api/chat/build/feedback') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
+    const raw = await readRequestBody(req);
+    let buildId = '';
+    try {
+      const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
+      if (isRecord(parsed) && typeof parsed['buildId'] === 'string') {
+        buildId = parsed['buildId'];
+      }
+    } catch {
+      sendJson(res, 400, { error: 'invalid payload' });
+      return;
+    }
+    if (buildId === '') {
+      sendJson(res, 400, { error: 'buildId is required' });
+      return;
+    }
+    const result = await addressFeatureFeedback(buildId);
+    sendJson(res, result.status === 'error' ? 409 : 200, result);
+    return;
+  }
   if (method === 'GET' && pathname === '/api/chat/builds') {
     // Feature builds (design -> PR) surfaced on the Code Autopilot tab, read-only for all viewers.
     sendJson(res, 200, { builds: listFeatureBuilds() });
+    return;
+  }
+  if (method === 'GET' && pathname === '/api/chat/loop/status') {
+    // Whether the optional "Export to Loop" action is available (configured + LWS reachable). Read-only.
+    sendJson(res, 200, await loopExportStatus());
+    return;
+  }
+  if (method === 'POST' && pathname === '/api/chat/loop/export') {
+    if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
+    const raw = await readRequestBody(req);
+    let artifactId = '';
+    try {
+      const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
+      if (isRecord(parsed) && typeof parsed['artifactId'] === 'string') {
+        artifactId = parsed['artifactId'];
+      }
+    } catch {
+      sendJson(res, 400, { error: 'invalid payload' });
+      return;
+    }
+    if (artifactId === '') {
+      sendJson(res, 400, { error: 'artifactId is required' });
+      return;
+    }
+    const result = await exportArtifactToLoopService(artifactId);
+    sendJson(res, result.status === 'error' ? 500 : result.status === 'unavailable' ? 409 : 200, result);
     return;
   }
   if (method === 'GET' && pathname === '/api/docs') {
@@ -4488,6 +4400,22 @@ function main(): void {
       }
     }
   }, 1000);
+  // Keep the Builder Autopilot chat store bounded: prune long-archived conversations at startup and daily.
+  const pruneChat = (): void => {
+    try {
+      const pruned = pruneChatStore();
+      if (pruned.removedConversations > 0) {
+        consoleLogger.info(
+          `Chat store: pruned ${String(pruned.removedConversations)} archived conversation(s) ` +
+            `(${String(pruned.removedMessages)} messages, ${String(pruned.removedArtifacts)} artifacts).`
+        );
+      }
+    } catch (error) {
+      consoleLogger.warn(`Chat store prune failed: ${describeError(error)}`);
+    }
+  };
+  pruneChat();
+  setInterval(pruneChat, 24 * 60 * 60 * 1000);
   // Retry the port briefly so a save-triggered restart can rebind once the previous process releases it.
   let listenAttempts = 0;
   server.on('error', (error: NodeJS.ErrnoException) => {

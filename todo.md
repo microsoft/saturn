@@ -62,55 +62,38 @@ Pending work and known follow-ups. (Completed items are removed; see git history
 - **Raise the open-PR cap after verification.** Currently pinned to **4** (`SATURN_FIX_MAX_OPEN_PRS=4`) while
   the agent is being verified and not yet released. Increase once its PRs are trusted.
 
-## Chat + conversational design / feature-building agent — follow-ups
+## Builder Autopilot — follow-ups
 
 The Builder Autopilot (Chat) tab — conversational design agent + feature-build pipeline, with live
 chain-of-thought, an iterative persisted todo-plan, and read-only access for non-owner viewers — has shipped
-(see git history / docs for details). Remaining follow-ups (not done):
+(see git history / docs for details).
 
+The follow-ups previously listed here have now shipped: the inert pre-React chat JS was removed; live
+chain-of-thought de-duplicates + rate-limits raw reasoning lines server-side; the conversation title is derived
+from the main design turn (no separate title CLI call); `chatStore` / `designAgent` / `markdownRender` /
+`loopExport` have unit tests; a feature build can address open PR review comments on request (owner-only
+**Address feedback** action); **every** model call (review / audit / design / feature-build / Code-Autopilot)
+denies the ADO + GitHub MCP *write* tools while keeping reads; cross-session memory is FTS5-backed and also
+searches prior chat messages; the chat store prunes long-archived conversations (with `VACUUM`); offline HTML
+downloads only inline the mermaid bundle when the doc actually has a diagram; the composer textarea auto-grows;
+and a gated **Export to Loop** button was added.
 
-- **Remove the legacy vanilla chat JS.** The pre-React chat script still ships inside the dashboard HTML
-  template literal as inert (unused) code — only `chatEsc` + `loadFeatureBuilds` are still needed. Delete the
-  rest. (Left in place deliberately: editing that large template-literal string is risky and a bad edit can
-  silently break the whole dashboard script; remove it carefully with a browser smoke-test.)
-- **Chain-of-thought polish.** The live CoT streams the model's **raw reasoning** verbatim, which can be
-  verbose — consider summarizing / rate-limiting reasoning lines. Also the narration-vs-answer split is a
-  heuristic (text streamed before a `tool.execution_start` is treated as narration and reset), so an answer
-  interleaved with a final tool call can briefly reset before the authoritative reply on `done` corrects it.
-- **Dedicated title call cost.** New conversations now fire a **separate** low-effort Copilot call just for the
-  title (so it appears immediately, decoupled from the main turn). That is an extra CLI invocation per new
-  chat; revisit if cost/latency matters (e.g. derive the title from the main turn's first tokens instead).
-- **Automated tests.** `chatStore`, `designAgent`, `featureBuild`, `chatService`, `markdownRender`, and the
-  SSE stream endpoint (incl. the new **JSONL CoT parser** + `[[META]]` hold-back) have no unit tests yet — add
-  coverage (store round-trips, JSON-parse fallbacks, the safe-markdown renderer, option-selection, the
-  twice-validate gate, SSE framing, and event→CoT/delta mapping).
-- **Feature-build PR monitoring.** Unlike the bug-fix loop, a feature build opens the PR and stops; it does not
-  address review/build feedback or clean up the branch afterward. Add monitoring (reuse the fix monitor) or an
-  explicit "address feedback" action from chat.
-- **Deny MCP write-tools for the build/fix model calls.** The feature-BUILD and Code-Autopilot model calls
-  still run with the ADO/GitHub MCP reachable (they need MCP reads); deny the MCP *write* tools (create/update
-  PR, work item, issue) so only Saturn's REST code ever creates those. (The read-only design agent is already
-  fully MCP-denied, and approve-&-build is now owner-gated server-side.)
-- **Richer cross-session memory.** Retrieval is keyword/`LIKE`-based over artifact title+body; consider FTS5 or
-  embeddings for better recall, and include prior chat messages (not just design docs).
-- **Chat store retention.** `chat.db` (conversations/messages/artifacts/feature_builds) grows unbounded — add a
-  retention/prune policy like the audit store needs.
-- **Downloaded-HTML size.** Offline HTML downloads inline the full mermaid bundle (~3.4 MB) so diagrams render
-  without a network; revisit if a lighter self-contained diagram option becomes available.
-- **Dependency audit.** Adding `mermaid` + `react`/`react-dom` introduced one moderate `npm audit` advisory
-  (transitive) — review and resolve or document it.
-- **Textarea polish.** The composer is a fixed 2-row textarea (Enter sends, Shift+Enter newlines); add
-  auto-grow up to a max height for longer prompts.
-- **Export design doc to Loop (parked — feasibility done, blocked on environment).** LWS exposes
-  `POST /v0.1/workspaces/{workspaceId}/pages` (title + `content:{type:'raw', value:<markdown>}`; markdown
-  auto-converts to Loop content), and the signed-in `az` user already holds the delegated scope
-  `LoopWorkspaces.ReadWrite.All` (plus a SharePoint token). Not built because the service isn't reachable from
-  the host today: the token audience `api.loop.cloud.microsoft` has no A record and the `.com` data host fails
-  a TLS cert-principal check (needs corpnet/VPN or the correct gateway host), and it's unconfirmed whether LWS
-  accepts the Azure-CLI delegated token (client allowlist) vs. needing a registered app / pftpop allowlist
-  entry. When unblocked: add a conditional **Export to Loop** button — shown only when an LWS base URL is
-  configured and `GET /v0.1/health/ready` succeeds — that posts the doc's title + markdown and links the new
-  Loop page back into the chat.
+Remaining / known:
+
+- **SSE stream framing has no direct test.** The JSONL chain-of-thought parser is covered via `designAgent`
+  (`extractAssistantText` / `parseReplyMeta` / `extractJson`), but the dashboard's inline SSE endpoint
+  (delta hold-back, narration reset, event→CoT/delta mapping) is not yet factored into a testable unit. The
+  narration-vs-answer split also remains a heuristic (self-corrected by the authoritative `done` event).
+- **Loop export is unverified end-to-end.** The **Export to Loop** button + backend
+  (`POST /v0.1/workspaces/{id}/pages`, Azure-CLI token) are implemented but **off by default** and gated on a
+  live `GET /v0.1/health/ready`; they have not been exercised against a real LWS because it is not reachable
+  from this host (needs corpnet/VPN + `SATURN_LOOP_BASE_URL` / `SATURN_LOOP_WORKSPACE_ID`). Verify once
+  reachable.
+- **Accepted dev-only advisory.** The only `npm audit` finding is a moderate DoS in `js-yaml` **< 3.15.0**,
+  pulled in transitively by `@istanbuljs/load-nyc-config` (coverage tooling) — dev-only and non-exploitable
+  (it parses only the project's own trusted `.nycrc`). `npm audit fix` would swap in a large new swc/esbuild
+  toolchain, so it is intentionally **not** forced; revisit if a low-churn fix appears. (`mermaid` / `react`
+  themselves are clean.)
 
 ## Setup installer & multi-repo
 

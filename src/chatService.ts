@@ -4,8 +4,9 @@ import { randomBytes } from 'node:crypto';
 import { defaultReasoningEffort, fixTimeoutMs, primaryModel } from './config';
 import { ensureAdoMcpServer, resolveCopilotCli } from './copilot';
 import { ensureFeatureClone } from './git';
-import { type DesignAgentContext, generateTitle, runDesignTurn } from './designAgent';
-import { type FeatureBuildContext, runFeatureBuild } from './featureBuild';
+import { type DesignAgentContext, runDesignTurn } from './designAgent';
+import { addressFeatureBuildFeedback, type FeatureBuildContext, runFeatureBuild } from './featureBuild';
+import { exportArtifactToLoop, loopExportStatus } from './loopExport';
 import { type TaskPlanItem } from './taskPlan';
 import {
     addMessage,
@@ -18,6 +19,7 @@ import {
     type FeatureBuild,
     getArtifact,
     getConversation,
+    getFeatureBuild,
     latestArtifact,
     listMessages,
     searchRelatedArtifacts,
@@ -88,45 +90,6 @@ function enqueueBuild(task: () => Promise<void>): void {
     });
 }
 
-/**
- * Kick off a quick, separate title-generation call for a brand-new conversation (background). When a title
- * comes back it is persisted and reported via onTitle - but only if the conversation still has the given
- * provisional title, so a user rename or a later message's title is never clobbered.
- */
-export function generateTitleAsync(
-    conversationId: string,
-    firstMessage: string,
-    provisional: string,
-    onTitle: (title: string) => void
-): void {
-    void (async () => {
-        try {
-            const env = await ensureBuildEnv();
-            if (env === undefined) {
-                return;
-            }
-            const ctx: DesignAgentContext = {
-                cliPath: env.cliPath,
-                model: primaryModel(),
-                reasoningEffort: 'low',
-                repoRoot: env.cloneDir,
-                timeoutMs: chatTimeoutMs()
-            };
-            const title = await generateTitle(ctx, firstMessage, logger);
-            if (title === undefined || title === '') {
-                return;
-            }
-            const conv = getConversation(conversationId);
-            if (conv !== undefined && conv.title === provisional) {
-                updateConversation(conversationId, { title });
-                onTitle(title);
-            }
-        } catch (error) {
-            logger.warn(`Chat service: async title generation failed: ${describeError(error)}`);
-        }
-    })();
-}
-
 // --- chat turns ------------------------------------------------------------------------------------------
 
 /** The state returned to the dashboard after a turn (the refreshed conversation + messages + latest doc). */
@@ -134,6 +97,8 @@ export interface ChatTurnResult {
     readonly conversation: Conversation;
     readonly messages: readonly ChatMessage[];
     readonly artifact?: Artifact;
+    /** The AI-suggested title for this turn (derived from the main design call; refines a provisional title). */
+    readonly suggestedTitle?: string;
 }
 
 // Heuristic: on the spec path, once the agent has asked, read the user's answer to decide whether they want
@@ -247,6 +212,9 @@ export async function handleChatTurn(
     return {
         conversation: getConversation(conversationId) ?? conversation,
         messages: listMessages(conversationId),
+        ...(result.suggestedTitle !== undefined && result.suggestedTitle.trim() !== ''
+            ? { suggestedTitle: result.suggestedTitle.trim() }
+            : {}),
         ...(artifact !== undefined ? { artifact } : { ...(latestArtifact(conversationId) !== undefined ? { artifact: latestArtifact(conversationId) } : {}) })
     };
 }
@@ -333,4 +301,79 @@ export async function approveAndBuild(
     };
     enqueueBuild(() => runFeatureBuild(build, artifact, buildCtx, logger));
     return { status: 'building', build };
+}
+
+/** Outcome of an owner-initiated "address review feedback" request. */
+export interface AddressFeedbackResult {
+    readonly status: 'queued' | 'error';
+    readonly message?: string;
+}
+
+/**
+ * Queue an owner-initiated pass to address the open review comments on a feature build's PR. It runs on the
+ * same serialized build queue (so it never collides with a build) and ONLY when explicitly requested - it
+ * does not poll or consume model capacity on its own.
+ */
+export async function addressFeatureFeedback(buildId: string): Promise<AddressFeedbackResult> {
+    const build = getFeatureBuild(buildId);
+    if (build === undefined) {
+        return { status: 'error', message: 'Build not found.' };
+    }
+    if (build.status !== 'pr-open' || build.prId === undefined) {
+        return { status: 'error', message: 'This build has no open pull request to address yet.' };
+    }
+    const artifact = getArtifact(build.artifactId);
+    if (artifact === undefined) {
+        return { status: 'error', message: 'The design document for this build was not found.' };
+    }
+    const env = await ensureBuildEnv();
+    if (env === undefined) {
+        return { status: 'error', message: 'The GitHub Copilot CLI is not available on the server.' };
+    }
+    const ctx: FeatureBuildContext = {
+        cliPath: env.cliPath,
+        model: primaryModel(),
+        reasoningEffort: defaultReasoningEffort(),
+        cloneDir: env.cloneDir,
+        timeoutMs: fixTimeoutMs(),
+        ...(env.allowMcpServerName !== undefined ? { allowMcpServerName: env.allowMcpServerName } : {})
+    };
+    enqueueBuild(() => addressFeatureBuildFeedback(build, artifact, ctx, logger));
+    return { status: 'queued' };
+}
+
+/** Outcome of exporting a design doc to Loop. */
+export interface LoopExportOutcome {
+    readonly status: 'exported' | 'unavailable' | 'error';
+    readonly url?: string;
+    readonly message?: string;
+}
+
+/**
+ * Export a design-doc artifact to a Loop workspace page (gated on Loop being configured + reachable). On
+ * success a link is posted back into the conversation. Never throws - failures are returned as a status.
+ */
+export async function exportArtifactToLoopService(artifactId: string): Promise<LoopExportOutcome> {
+    const artifact = getArtifact(artifactId);
+    if (artifact === undefined) {
+        return { status: 'error', message: 'Design document not found.' };
+    }
+    const status = await loopExportStatus();
+    if (!status.available) {
+        return { status: 'unavailable', message: `Loop export is not available (${status.reason ?? 'unknown'}).` };
+    }
+    try {
+        const result = await exportArtifactToLoop(artifact.title, artifact.markdown, logger);
+        addMessage({
+            conversationId: artifact.conversationId,
+            role: 'assistant',
+            content:
+                result.url !== undefined
+                    ? `\ud83d\udcc4 Exported **${artifact.title}** to Loop: [open the page](${result.url}).`
+                    : `\ud83d\udcc4 Exported **${artifact.title}** to Loop.`
+        });
+        return { status: 'exported', ...(result.url !== undefined ? { url: result.url } : {}) };
+    } catch (error) {
+        return { status: 'error', message: describeError(error) };
+    }
 }

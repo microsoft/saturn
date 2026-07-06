@@ -5,9 +5,9 @@ import path from 'node:path';
 import { z } from 'zod';
 import { AZURE_DEVOPS_CONFIG, maxAutopilotContinues } from './config';
 import { runCopilotEdit, runCopilotReview } from './copilot';
-import { createPullRequest, getAzureDevOpsAuthHeader } from './ado';
+import { createPullRequest, getActivePullRequestComments, getAzureDevOpsAuthHeader } from './ado';
 import { AUDIT_CATEGORIES } from './auditStore';
-import { commitAllChanges, createFixBranch, lintChangedFilesInClone, pushFixBranch, workingTreeChanges } from './git';
+import { checkoutExistingBranch, commitAllChanges, createFixBranch, lintChangedFilesInClone, pushFixBranch, workingTreeChanges } from './git';
 import {
     addMessage,
     type Artifact,
@@ -473,5 +473,91 @@ export async function runFeatureBuild(
             content: `⚠️ I couldn't complete the build for **${artifact.title}**: ${message}`
         });
         logger.warn(`Feature build: failed for "${artifact.title}": ${message}`);
+    }
+}
+
+/**
+ * Address the open human review comments on a feature build's PR: check out the existing PR branch, run a
+ * corrective edit against the feedback, re-validate TWICE + lint, then commit + push to the same branch. This
+ * is the feature-build counterpart of the bug-fix feedback loop, but it runs ONLY when explicitly triggered
+ * (owner-initiated) so it never consumes model capacity on its own. A summary is posted back to the chat.
+ */
+export async function addressFeatureBuildFeedback(
+    build: FeatureBuild,
+    artifact: Artifact,
+    ctx: FeatureBuildContext,
+    logger: Logger
+): Promise<void> {
+    if (build.prId === undefined) {
+        addMessage({
+            conversationId: build.conversationId,
+            role: 'assistant',
+            content: `There is no open pull request for **${artifact.title}** yet, so there is no review feedback to address.`
+        });
+        return;
+    }
+    try {
+        updateFeatureBuild(build.id, { status: 'implementing', lastAction: 'checking out the PR branch', lastError: null });
+        await checkoutExistingBranch(ctx.cloneDir, build.branch, logger);
+
+        const comments = await getActivePullRequestComments(ctx.cloneDir, build.prId);
+        if (comments.length === 0) {
+            updateFeatureBuild(build.id, { status: 'pr-open', lastAction: 'no open review comments' });
+            addMessage({
+                conversationId: build.conversationId,
+                role: 'assistant',
+                content: `I checked PR !${String(build.prId)} for **${artifact.title}** and found no open review comments to address.`
+            });
+            return;
+        }
+
+        const feedback = comments.map((comment, index) => `${String(index + 1)}. ${comment}`).join('\n');
+        updateFeatureBuild(build.id, { status: 'implementing', lastAction: `addressing ${String(comments.length)} review comment(s)` });
+        await runCorrectiveEdit(
+            artifact,
+            build.selectedOption,
+            `The reviewers left the following comments on the pull request. Address the ROOT CAUSE of each faithfully to the design (do not suppress or disable rules):\n${feedback}`,
+            ctx,
+            logger
+        );
+
+        const changed = await workingTreeChanges(ctx.cloneDir);
+        if (changed.length === 0) {
+            updateFeatureBuild(build.id, { status: 'pr-open', lastAction: 'no code change needed for feedback' });
+            addMessage({
+                conversationId: build.conversationId,
+                role: 'assistant',
+                content: `I reviewed the ${String(comments.length)} comment(s) on PR !${String(build.prId)} for **${artifact.title}** but did not need to change any code.`
+            });
+            return;
+        }
+
+        updateFeatureBuild(build.id, { status: 'validating', lastAction: 'self-validating feedback changes (twice)' });
+        await validateTwiceOrThrow(artifact, build.selectedOption, ctx, logger);
+        await lintGate(artifact, build.selectedOption, ctx, logger);
+
+        const committed = await commitAllChanges(ctx.cloneDir, `Saturn feature: address review feedback for ${artifact.title}`, logger);
+        if (!committed) {
+            updateFeatureBuild(build.id, { status: 'pr-open', lastAction: 'nothing to commit after addressing feedback' });
+            return;
+        }
+        updateFeatureBuild(build.id, { status: 'pushing', lastAction: 'pushing feedback changes' });
+        await pushWithAuthRetry(ctx.cloneDir, build.branch, logger);
+        updateFeatureBuild(build.id, { status: 'pr-open', lastAction: 'addressed review feedback', lastError: null });
+        addMessage({
+            conversationId: build.conversationId,
+            role: 'assistant',
+            content: `✅ I addressed ${String(comments.length)} review comment(s) and pushed the changes to [PR !${String(build.prId)}](${build.prUrl ?? ''}). Please re-review when you have a moment.`
+        });
+        logger.info(`Feature build: addressed ${String(comments.length)} comment(s) on PR !${String(build.prId)} for "${artifact.title}".`);
+    } catch (error) {
+        const message = describeError(error);
+        updateFeatureBuild(build.id, { status: 'pr-open', lastError: message, lastAction: 'addressing feedback failed' });
+        addMessage({
+            conversationId: build.conversationId,
+            role: 'assistant',
+            content: `⚠️ I couldn't finish addressing the review feedback for **${artifact.title}**: ${message}`
+        });
+        logger.warn(`Feature build: addressing feedback failed for "${artifact.title}": ${message}`);
     }
 }

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { chatRetentionDays } from './config';
 
 // Persistent store for the Chat tab: conversations, their messages, and the design-doc artifacts the design
 // agent produces. Mirrors the fixStore pattern (node:sqlite DatabaseSync, INSERT OR REPLACE, zod row parsing,
@@ -232,6 +233,7 @@ function getDb(): DatabaseSync {
     mkdirSync(chatDir(), { recursive: true });
     const database = new DatabaseSync(target);
     database.exec(TABLE_SQL);
+    initSearchIndex(database);
     dbInstance = database;
     dbInstancePath = target;
     return database;
@@ -248,6 +250,95 @@ export function closeChatDb(): void {
         dbInstance = undefined;
         dbInstancePath = undefined;
     }
+    ftsAvailable = false;
+}
+
+// --- full-text search index (cross-session memory) -------------------------------------------------------
+// A single FTS5 index over BOTH design-doc artifacts AND chat messages, so a new chat can recall prior work
+// by content (not just exact substrings). FTS5 ships with the SQLite that node:sqlite bundles, but we guard
+// its creation: if the build lacks FTS5, `ftsAvailable` stays false and search falls back to a LIKE scan.
+
+let ftsAvailable = false;
+const SEARCH_INDEX_SQL = `CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  refId UNINDEXED, kind UNINDEXED, conversationId UNINDEXED, title, body, tokenize = 'porter unicode61'
+);`;
+
+function initSearchIndex(database: DatabaseSync): void {
+    try {
+        database.exec(SEARCH_INDEX_SQL);
+        ftsAvailable = true;
+    } catch {
+        ftsAvailable = false;
+        return;
+    }
+    // Backfill from existing rows the first time the index is created (e.g. an upgrade of an existing store).
+    try {
+        const countRaw = database.prepare('SELECT COUNT(*) AS n FROM search_fts').get();
+        const count = z.object({ n: z.number() }).loose().safeParse(countRaw);
+        if (count.success && count.data.n === 0) {
+            const insert = database.prepare(
+                'INSERT INTO search_fts (refId, kind, conversationId, title, body) VALUES (:refId, :kind, :conversationId, :title, :body)'
+            );
+            const artRows = database.prepare('SELECT id, conversationId, title, markdown FROM artifacts').all();
+            for (const raw of artRows) {
+                const row = z
+                    .object({ id: z.string(), conversationId: z.string(), title: z.string(), markdown: z.string() })
+                    .loose()
+                    .safeParse(raw);
+                if (row.success) {
+                    insert.run({ refId: row.data.id, kind: 'artifact', conversationId: row.data.conversationId, title: row.data.title, body: row.data.markdown });
+                }
+            }
+            const msgRows = database
+                .prepare("SELECT id, conversationId, content FROM chat_messages WHERE role IN ('user', 'assistant')")
+                .all();
+            for (const raw of msgRows) {
+                const row = z
+                    .object({ id: z.string(), conversationId: z.string(), content: z.string() })
+                    .loose()
+                    .safeParse(raw);
+                if (row.success) {
+                    insert.run({ refId: row.data.id, kind: 'message', conversationId: row.data.conversationId, title: '', body: row.data.content });
+                }
+            }
+        }
+    } catch {
+        /* best-effort backfill; search still works for rows indexed going forward */
+    }
+}
+
+/** Add or replace a row in the search index (best-effort; a failure never blocks the write path). */
+function indexForSearch(refId: string, kind: 'artifact' | 'message', conversationId: string, title: string, body: string): void {
+    if (!ftsAvailable) {
+        return;
+    }
+    try {
+        const db = getDb();
+        db.prepare('DELETE FROM search_fts WHERE refId = :refId').run({ refId });
+        db.prepare(
+            'INSERT INTO search_fts (refId, kind, conversationId, title, body) VALUES (:refId, :kind, :conversationId, :title, :body)'
+        ).run({ refId, kind, conversationId, title, body });
+    } catch {
+        /* best-effort */
+    }
+}
+
+/** Remove all search-index rows for a conversation (used when it is pruned). */
+function removeConversationFromSearch(conversationId: string): void {
+    if (!ftsAvailable) {
+        return;
+    }
+    try {
+        getDb().prepare('DELETE FROM search_fts WHERE conversationId = :conversationId').run({ conversationId });
+    } catch {
+        /* best-effort */
+    }
+}
+
+/** Whether the FTS5 full-text index is available (false => cross-session search uses the LIKE fallback). */
+export function searchIndexAvailable(): boolean {
+    getDb();
+    return ftsAvailable;
 }
 
 // --- conversations ---------------------------------------------------------------------------------------
@@ -408,6 +499,9 @@ export function addMessage(input: NewMessage): ChatMessage {
             createdAt: message.createdAt
         });
     touchConversation(input.conversationId);
+    if (message.role === 'user' || message.role === 'assistant') {
+        indexForSearch(message.id, 'message', message.conversationId, '', message.content);
+    }
     return message;
 }
 
@@ -502,6 +596,7 @@ export function createArtifact(input: NewArtifact): Artifact {
             createdAt: artifact.createdAt,
             updatedAt: artifact.updatedAt
         });
+    indexForSearch(artifact.id, 'artifact', artifact.conversationId, artifact.title, artifact.markdown);
     return artifact;
 }
 
@@ -556,7 +651,11 @@ export function updateArtifact(id: string, patch: ArtifactPatch): Artifact | und
     getDb()
         .prepare(`UPDATE artifacts SET ${sets.join(', ')} WHERE id = :id`)
         .run(params);
-    return getArtifact(id);
+    const updated = getArtifact(id);
+    if (updated !== undefined && (patch.title !== undefined || patch.markdown !== undefined)) {
+        indexForSearch(updated.id, 'artifact', updated.conversationId, updated.title, updated.markdown);
+    }
+    return updated;
 }
 
 /** Look up a single artifact by id. */
@@ -636,6 +735,72 @@ export function searchRelatedArtifacts(
     if (tokens.length === 0) {
         return [];
     }
+    if (ftsAvailable) {
+        try {
+            const viaFts = searchRelatedArtifactsFts(tokens, excludeConversationId, limit);
+            if (viaFts.length > 0) {
+                return viaFts;
+            }
+        } catch {
+            /* fall through to the LIKE scan */
+        }
+    }
+    return searchRelatedArtifactsLike(tokens, excludeConversationId, limit);
+}
+
+/**
+ * FTS5-backed search across BOTH design docs and chat messages. A content match anywhere in a conversation
+ * (including its messages, not just the design doc) surfaces that conversation's latest design doc, ranked by
+ * how many index rows matched (ties broken by recency). Only conversations that produced a design doc are
+ * returned, since that is the reusable prior work the design agent injects as context.
+ */
+function searchRelatedArtifactsFts(
+    tokens: readonly string[],
+    excludeConversationId: string,
+    limit: number
+): readonly RelatedArtifact[] {
+    // Tokens are already restricted to [a-z0-9] (>=4 chars) by tokenizeQuery, so quoting each as an FTS
+    // string literal is injection-safe; OR-joining maximizes recall.
+    const match = tokens.map((token) => `"${token}"`).join(' OR ');
+    const rows = getDb()
+        .prepare(
+            `SELECT conversationId FROM search_fts
+             WHERE search_fts MATCH :match AND conversationId != :exclude
+             ORDER BY bm25(search_fts)
+             LIMIT 300`
+        )
+        .all({ match, exclude: excludeConversationId });
+    const hitsByConversation = new Map<string, number>();
+    for (const raw of rows) {
+        const parsed = z.object({ conversationId: z.string() }).loose().safeParse(raw);
+        if (parsed.success) {
+            const id = parsed.data.conversationId;
+            hitsByConversation.set(id, (hitsByConversation.get(id) ?? 0) + 1);
+        }
+    }
+    const candidates: RelatedArtifact[] = [];
+    hitsByConversation.forEach((score, conversationId) => {
+        const artifact = latestArtifact(conversationId);
+        if (artifact === undefined) {
+            return;
+        }
+        const conversation = getConversation(conversationId);
+        candidates.push({ conversationId, conversationTitle: conversation?.title ?? '(untitled)', artifact, score });
+    });
+    candidates.sort((left, right) =>
+        right.score !== left.score
+            ? right.score - left.score
+            : right.artifact.updatedAt.localeCompare(left.artifact.updatedAt)
+    );
+    return candidates.slice(0, limit);
+}
+
+/** Fallback substring (LIKE) search over design-doc artifacts, used when FTS5 is unavailable. */
+function searchRelatedArtifactsLike(
+    tokens: readonly string[],
+    excludeConversationId: string,
+    limit: number
+): readonly RelatedArtifact[] {
     const params: Record<string, string> = { exclude: excludeConversationId };
     const likeClauses: string[] = [];
     tokens.forEach((token, index) => {
@@ -863,4 +1028,69 @@ export function listFeatureBuilds(limit = 100): readonly FeatureBuild[] {
         }
     }
     return result;
+}
+
+// --- retention -------------------------------------------------------------------------------------------
+
+/** Options for pruning the chat store (see `chatRetentionDays` for the default window). */
+export interface ChatPruneOptions {
+    /** Archived conversations not updated within this many days are removed. Defaults to `chatRetentionDays()`. */
+    readonly maxAgeDays?: number;
+    /** Reference "now" (tests inject a fixed clock). Defaults to the current time. */
+    readonly now?: Date;
+    /** Reclaim freed pages with VACUUM afterwards. Defaults to true. */
+    readonly vacuum?: boolean;
+}
+
+/** What a prune pass removed. */
+export interface ChatPruneResult {
+    readonly removedConversations: number;
+    readonly removedMessages: number;
+    readonly removedArtifacts: number;
+    readonly removedFeatureBuilds: number;
+}
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Prune the chat store so `chat.db` stays bounded: delete ARCHIVED conversations older than the retention
+ * window along with their messages, artifacts, feature-build records, and search-index rows, then (optionally)
+ * VACUUM. ACTIVE conversations are never touched, so nothing a user is still working on is removed.
+ */
+export function pruneChatStore(options: ChatPruneOptions = {}): ChatPruneResult {
+    const maxAgeDays =
+        options.maxAgeDays !== undefined && options.maxAgeDays > 0 ? options.maxAgeDays : chatRetentionDays();
+    const now = options.now ?? new Date();
+    const cutoff = new Date(now.getTime() - maxAgeDays * MS_PER_DAY).toISOString();
+    const db = getDb();
+    const targetRows = db
+        .prepare("SELECT id FROM conversations WHERE status = 'archived' AND updatedAt < :cutoff")
+        .all({ cutoff });
+    const ids: string[] = [];
+    for (const raw of targetRows) {
+        const parsed = z.object({ id: z.string() }).loose().safeParse(raw);
+        if (parsed.success) {
+            ids.push(parsed.data.id);
+        }
+    }
+    let removedMessages = 0;
+    let removedArtifacts = 0;
+    let removedFeatureBuilds = 0;
+    for (const id of ids) {
+        removedMessages += Number(db.prepare('DELETE FROM chat_messages WHERE conversationId = :id').run({ id }).changes);
+        removedArtifacts += Number(db.prepare('DELETE FROM artifacts WHERE conversationId = :id').run({ id }).changes);
+        removedFeatureBuilds += Number(
+            db.prepare('DELETE FROM feature_builds WHERE conversationId = :id').run({ id }).changes
+        );
+        removeConversationFromSearch(id);
+        db.prepare('DELETE FROM conversations WHERE id = :id').run({ id });
+    }
+    if (ids.length > 0 && (options.vacuum ?? true)) {
+        try {
+            db.exec('VACUUM');
+        } catch {
+            /* VACUUM is best-effort (e.g. a no-op inside an open transaction) */
+        }
+    }
+    return { removedConversations: ids.length, removedMessages, removedArtifacts, removedFeatureBuilds };
 }

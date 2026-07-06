@@ -635,6 +635,37 @@ export function maxAutopilotContinues(): number {
   return Number.isNaN(parsed) || parsed <= 0 ? 50 : parsed;
 }
 
+/**
+ * Retention window (in days) for the Builder Autopilot chat store: ARCHIVED conversations not updated within
+ * this many days are pruned (with their messages, artifacts, and feature-build records) so `chat.db` stays
+ * bounded over months. Active conversations are never pruned. Default 90; override SATURN_CHAT_RETENTION_DAYS.
+ */
+export function chatRetentionDays(): number {
+  const parsed = Number.parseInt(process.env.SATURN_CHAT_RETENTION_DAYS ?? '', 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? 90 : parsed;
+}
+
+// --- Loop export (optional, off by default) --------------------------------------------------------------
+// Exporting a design doc to a Microsoft Loop workspace page is gated behind these settings AND a live health
+// check, because the Loop Web Service is not reachable from every host (it typically needs corpnet/VPN). With
+// no SATURN_LOOP_BASE_URL configured the whole feature stays dormant and the UI never shows the button.
+
+/** Base URL of the Loop Web Service (e.g. https://<host>). Empty (default) disables Loop export entirely. */
+export function loopBaseUrl(): string {
+  return (process.env.SATURN_LOOP_BASE_URL ?? '').trim();
+}
+
+/** The Loop workspace id that exported pages are created under. Required for export. */
+export function loopWorkspaceId(): string {
+  return (process.env.SATURN_LOOP_WORKSPACE_ID ?? '').trim();
+}
+
+/** The `az account get-access-token --resource` value used to mint a Loop token. Defaults to the LWS audience. */
+export function loopTokenResource(): string {
+  const value = (process.env.SATURN_LOOP_TOKEN_RESOURCE ?? '').trim();
+  return value !== '' ? value : 'https://api.loop.cloud.microsoft';
+}
+
 // --- Code Autopilot (the standalone PR-authoring agent) --------------------------------------------------
 
 /**

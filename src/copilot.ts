@@ -69,6 +69,45 @@ export function getModelStatus(): {
 
 const ADO_MCP_SERVER_NAME = 'azure-devops';
 
+// MCP "write" tools on the Azure DevOps + GitHub MCP servers. Saturn - not the model - creates every pull
+// request, work item, issue, branch, and comment through its own REST code, so these mutating MCP tools are
+// denied on EVERY model call (review, audit, design, feature build, and Code Autopilot) while the read-only
+// MCP tools (list / get / search) stay reachable. The ADO MCP server is registered with `tools: ['*']`, so
+// `--allow-all-tools` alone would otherwise expose these; an explicit deny is the only safeguard. Denying a
+// tool that is not registered is a harmless no-op, so both the server-prefixed and bare names are listed.
+const ADO_MCP_WRITE_TOOL_NAMES: readonly string[] = [
+  'repo_create_pull_request',
+  'repo_update_pull_request',
+  'repo_create_pull_request_thread',
+  'repo_reply_to_comment',
+  'repo_resolve_comment',
+  'repo_update_pull_request_reviewers',
+  'wit_create_work_item',
+  'wit_update_work_item',
+  'wit_add_work_item_comment',
+  'wit_link_work_item_to_pull_request',
+  'wiki_create_or_update_page'
+];
+const GITHUB_MCP_WRITE_TOOL_NAMES: readonly string[] = [
+  'create_pull_request',
+  'update_pull_request',
+  'merge_pull_request',
+  'create_pull_request_review',
+  'create_issue',
+  'update_issue',
+  'add_issue_comment',
+  'create_or_update_file',
+  'push_files',
+  'create_branch',
+  'delete_file',
+  'create_repository',
+  'fork_repository'
+];
+export const DENIED_MCP_WRITE_TOOLS: readonly string[] = [
+  ...ADO_MCP_WRITE_TOOL_NAMES.flatMap((tool) => [`${ADO_MCP_SERVER_NAME}-${tool}`, tool]),
+  ...GITHUB_MCP_WRITE_TOOL_NAMES.flatMap((tool) => [`github-mcp-server-${tool}`, tool])
+];
+
 // The reviewer may read and search the entire repo with ANY tool, but must never change anything. We
 // auto-approve all tools (so the headless run never blocks on a permission prompt) and then deny every
 // path that could modify files or git/branch/PR state. Denying a tool that does not exist in a given
@@ -127,7 +166,9 @@ const DENIED_MUTATING_TOOLS: readonly string[] = [
   'shell(npm)',
   'shell(yarn)',
   'shell(pnpm)',
-  'shell(npx)'
+  'shell(npx)',
+  // Also deny the mutating MCP tools (Saturn owns all PR/work-item/issue creation via REST).
+  ...DENIED_MCP_WRITE_TOOLS
 ];
 
 // Code Autopilot EDITS files, so the file-write tools (write/edit/create/apply_patch) are ALLOWED. But
@@ -175,7 +216,9 @@ const FIX_DENIED_TOOLS: readonly string[] = [
   'shell(npm)',
   'shell(yarn)',
   'shell(pnpm)',
-  'shell(npx)'
+  'shell(npx)',
+  // Feature builds + bug fixes edit files, but Saturn (not the model) opens every PR/work item via REST.
+  ...DENIED_MCP_WRITE_TOOLS
 ];
 
 function fileExists(candidate: string): boolean {
