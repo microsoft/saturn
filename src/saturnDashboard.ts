@@ -4407,7 +4407,7 @@ function main(): void {
       if (pruned.removedConversations > 0) {
         consoleLogger.info(
           `Chat store: pruned ${String(pruned.removedConversations)} archived conversation(s) ` +
-            `(${String(pruned.removedMessages)} messages, ${String(pruned.removedArtifacts)} artifacts).`
+          `(${String(pruned.removedMessages)} messages, ${String(pruned.removedArtifacts)} artifacts).`
         );
       }
     } catch (error) {
