@@ -3,7 +3,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { AZURE_DEVOPS_CONFIG, maxAutopilotContinues } from './config';
+import { AZURE_DEVOPS_CONFIG, maxAutopilotContinues, maxBuildSteps } from './config';
 import { runCopilotEdit, runCopilotReview } from './copilot';
 import { createPullRequest, getActivePullRequestComments, getAzureDevOpsAuthHeader } from './ado';
 import { AUDIT_CATEGORIES } from './auditStore';
@@ -39,8 +39,6 @@ export interface FeatureBuildContext {
 const MAX_VALIDATION_FILE_BYTES = 100_000;
 const MAX_CORRECTIVE_ROUNDS = 4;
 const REQUIRED_CLEAN_PASSES = 2;
-// Upper bound on plan steps Saturn will drive one-at-a-time; larger plans fall back to a single implement pass.
-const MAX_BUILD_STEPS = 12;
 
 const validationIssueSchema = z.object({
     filePath: z.string(),
@@ -393,7 +391,7 @@ export async function runFeatureBuild(
         // Saturn-orchestrated multi-pass build: drive the plan ONE step at a time (re-invoking the model per
         // pending item), marking each item done + persisting progress, so it iterates until the whole plan is
         // implemented. Falls back to a single implement pass when there is no usable (or too large) step plan.
-        if (planItems.length > 0 && planItems.length <= MAX_BUILD_STEPS) {
+        if (planItems.length > 0 && planItems.length <= maxBuildSteps()) {
             for (let i = 0; i < planItems.length; i += 1) {
                 updateFeatureBuild(build.id, { status: 'implementing', lastAction: `step ${String(i + 1)}/${String(planItems.length)}: ${planItems[i] ?? ''}` });
                 const stepEdit = await runCopilotEdit({

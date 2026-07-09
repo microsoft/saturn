@@ -632,7 +632,26 @@ export function contextTier(): string {
  */
 export function maxAutopilotContinues(): number {
   const parsed = Number.parseInt(process.env.SATURN_MAX_CONTINUES ?? '', 10);
-  return Number.isNaN(parsed) || parsed <= 0 ? 50 : parsed;
+  return Number.isNaN(parsed) || parsed <= 0 ? 100 : parsed;
+}
+
+/**
+ * Max Saturn-orchestrated design passes: after each pass, if the model reports its plan is not complete, the
+ * design agent re-invokes it to keep working through the remaining todo items. Default 12 - a generous ceiling
+ * so a complex design iterates to completion (rarely reached). Override with SATURN_MAX_DESIGN_PASSES.
+ */
+export function maxDesignPasses(): number {
+  const parsed = Number.parseInt(process.env.SATURN_MAX_DESIGN_PASSES ?? '', 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? 12 : parsed;
+}
+
+/**
+ * Max plan steps the feature build drives one-at-a-time (larger plans fall back to a single implement pass).
+ * Default 30 so a big feature can be built step-by-step to completion. Override with SATURN_MAX_BUILD_STEPS.
+ */
+export function maxBuildSteps(): number {
+  const parsed = Number.parseInt(process.env.SATURN_MAX_BUILD_STEPS ?? '', 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? 30 : parsed;
 }
 
 /**

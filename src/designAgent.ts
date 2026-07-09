@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 import { z } from 'zod';
-import { maxAutopilotContinues, REPO_DESCRIPTION } from './config';
+import { maxAutopilotContinues, maxDesignPasses, REPO_DESCRIPTION } from './config';
 import { runCopilotReview } from './copilot';
 import type { ChatMessage, Conversation, DesignOption, Feasibility, RelatedArtifact } from './chatStore';
 import { savePlan, type TaskPlanItem } from './taskPlan';
@@ -59,9 +59,6 @@ const MAX_HISTORY_MESSAGES = 24;
 const MAX_MESSAGE_CHARS = 8000;
 // The user's current message can be large (e.g. a pasted spec / requirements doc); allow up to ~1MB.
 const MAX_USER_MESSAGE_CHARS = 1_000_000;
-// Saturn-orchestrated design passes: after each pass, if the model reports its plan is not complete, Saturn
-// re-invokes it to keep working through the remaining todo items - up to this many passes.
-const MAX_DESIGN_PASSES = 4;
 
 function truncate(text: string, max: number): string {
     return text.length <= max ? text : `${text.slice(0, max)}\n...[truncated]`;
@@ -315,7 +312,7 @@ function buildTurnResult(reply: string, meta: z.infer<typeof responseSchema> | u
 /**
  * Run a design turn as a Saturn-orchestrated, multi-pass loop: research read-only, produce a todo plan, and
  * keep re-invoking the model to work through the remaining items (marking each done, surfacing the plan live
- * via onPlan) until the model reports the plan complete or MAX_DESIGN_PASSES is reached. Never mutates the repo.
+ * via onPlan) until the model reports the plan complete or the design-pass cap is reached. Never mutates the repo.
  */
 export async function runDesignTurn(
     ctx: DesignAgentContext,
@@ -327,8 +324,9 @@ export async function runDesignTurn(
     const failure = (message: string): DesignTurnResult => ({ reply: message, options: [], askAudience: false });
     let planItems: TaskPlanItem[] = [];
     let lastTurn: DesignTurnResult | undefined;
+    const maxPasses = maxDesignPasses();
 
-    for (let pass = 0; pass < MAX_DESIGN_PASSES; pass += 1) {
+    for (let pass = 0; pass < maxPasses; pass += 1) {
         const prompt = buildDesignPrompt(input, pass === 0 ? undefined : planItems);
         let result;
         try {
