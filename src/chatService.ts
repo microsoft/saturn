@@ -5,6 +5,7 @@ import { defaultReasoningEffort, fixTimeoutMs, primaryModel } from './config';
 import { ensureAdoMcpServer, resolveCopilotCli } from './copilot';
 import { ensureFeatureClone } from './git';
 import { type DesignAgentContext, runDesignTurn } from './designAgent';
+import { runFinderTurn } from './finderAgent';
 import { addressFeatureBuildFeedback, type FeatureBuildContext, runFeatureBuild } from './featureBuild';
 import { exportArtifactToLoop, loopExportStatus } from './loopExport';
 import { type TaskPlanItem } from './taskPlan';
@@ -189,7 +190,11 @@ export async function handleChatTurn(
         timeoutMs: chatTimeoutMs()
     };
 
-    const result = await runDesignTurn(ctx, { conversation, history: priorHistory, userMessage, relatedWork: related }, logger, onProgress, onPlan);
+    const turnInput = { conversation, history: priorHistory, userMessage, relatedWork: related };
+    const result =
+        conversation.mode === 'finder'
+            ? await runFinderTurn(ctx, turnInput, logger, onProgress, onPlan)
+            : await runDesignTurn(ctx, turnInput, logger, onProgress, onPlan);
 
     let artifact: Artifact | undefined;
     if (result.designDoc !== undefined) {
@@ -245,6 +250,13 @@ export async function approveAndBuild(
     const artifact = getArtifact(artifactId);
     if (artifact === undefined || artifact.conversationId !== conversationId) {
         return { status: 'error', message: 'Design document not found.' };
+    }
+    const parentConversation = getConversation(conversationId);
+    if (parentConversation !== undefined && parentConversation.mode === 'finder') {
+        return {
+            status: 'error',
+            message: 'This is a Feature Finder report, not a buildable design. Start a Builder chat to design a specific idea.'
+        };
     }
     if (artifact.feasibility === 'not-possible') {
         addMessage({

@@ -76,9 +76,17 @@ from the main design turn (no separate title CLI call); `chatStore` / `designAge
 denies the ADO + GitHub MCP *write* tools while keeping reads; cross-session memory is FTS5-backed and also
 searches prior chat messages; the chat store prunes long-archived conversations (with `VACUUM`); offline HTML
 downloads only inline the mermaid bundle when the doc actually has a diagram; the composer textarea auto-grows;
-and a gated **Export to Loop** button was added.
+and a gated **Export to Loop** button was added. A second chat agent, **Feature Finder**, was added: a composer
+dropdown (Builder is the default) switches to a read-only agent that surveys the codebase and proposes a
+**ranked list of high-ROI feature / hackathon ideas** (Easy→High implementation cost, always high ROI) as a
+downloadable report; a chosen idea is then designed and built in a Builder chat.
 
 Remaining / known:
+
+- **Feature Finder → Builder hand-off is manual.** Feature Finder produces a ranked opportunities report;
+  taking a chosen idea into a Builder chat is a manual "New chat + Builder agent + describe it" step, not a
+  one-click "design this idea". `finderAgent` also has no unit test yet (it reuses the already-tested
+  design-agent parsers).
 
 - **SSE stream framing has no direct test.** The JSONL chain-of-thought parser is covered via `designAgent`
   (`extractAssistantText` / `parseReplyMeta` / `extractJson`), but the dashboard's inline SSE endpoint

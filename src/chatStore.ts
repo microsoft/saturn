@@ -13,8 +13,8 @@ import { chatRetentionDays } from './config';
 // a lazily-opened singleton handle under ~/.saturn). Chat is available to all dashboard viewers, so nothing
 // here is gated on the owner identity - the HTTP layer decides who may call what.
 
-/** How a conversation began: a design request, or a spec from a PM / non-developer. */
-export type ConversationMode = 'design' | 'spec';
+/** How a conversation began: a design request, a spec from a PM / non-developer, or a feature-finding survey. */
+export type ConversationMode = 'design' | 'spec' | 'finder';
 
 /** Whether the requester wants technical detail. Resolved by the agent asking on the spec path. */
 export type ConversationAudience = 'technical' | 'non-technical';
@@ -84,7 +84,7 @@ const conversationRowSchema = z
     .object({
         id: z.string(),
         title: z.string(),
-        mode: z.enum(['design', 'spec']).catch('design'),
+        mode: z.enum(['design', 'spec', 'finder']).catch('design'),
         audience: z.enum(['technical', 'non-technical']).nullable(),
         requester: z.string(),
         status: z.enum(['active', 'archived']).catch('active'),

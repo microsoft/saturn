@@ -569,6 +569,12 @@ const DASHBOARD_HTML = `<!doctype html>
   .chat-modal-actions { display:flex; justify-content:flex-end; gap:8px; }
   .chat-docbar { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line,#232a44); background:rgba(41,82,227,.06); }
   .chat-composer { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line,#232a44); align-items:flex-end; }
+  .chat-composer-outer { display:flex; flex-direction:column; border-top:1px solid var(--line,#232a44); }
+  .chat-composer-outer .chat-composer { border-top:none; padding-top:10px; }
+  .chat-agentbar { display:flex; align-items:center; gap:8px; padding:10px 16px 0; }
+  .chat-agentlabel { font-size:11px; letter-spacing:.6px; text-transform:uppercase; color:var(--muted,#8b93b5); }
+  .chat-agentsel { background:var(--input-bg,#0d1430); color:var(--text,#e9ecf7); border:1px solid var(--line,#232a44); border-radius:8px; padding:5px 9px; font:inherit; font-size:13px; cursor:pointer; }
+  .chat-agentsel:disabled { opacity:.55; cursor:default; }
   .chat-input { flex:1; resize:none; min-height:58px; max-height:160px; overflow-y:auto; background:var(--input-bg,#0d1430); color:inherit; border:1px solid var(--line,#232a44); border-radius:10px; padding:11px 12px; font:inherit; box-sizing:border-box; }
   .chat-input:focus { outline:none; border-color:#3168ff; }
   .chat-splitter { flex:0 0 6px; cursor:col-resize; background:transparent; transition:background .15s; }
@@ -2273,6 +2279,7 @@ const DASHBOARD_HTML = `<!doctype html>
     var s18 = useState(false); var owner = s18[0], setOwner = s18[1];
     var s19 = useState([]); var plan = s19[0], setPlan = s19[1];
     var s20 = useState(false); var loopOk = s20[0], setLoopOk = s20[1];
+    var s21 = useState('design'); var agentMode = s21[0], setAgentMode = s21[1];
 
     var threadRef = useRef(null);
     var docBodyRef = useRef(null);
@@ -2379,7 +2386,7 @@ const DASHBOARD_HTML = `<!doctype html>
       setDraft('');
       setMessages(function (p) { return p.concat([{ role: 'user', content: text }]); });
       if (!currentId) {
-        apost('/api/chat/conversations', {}).then(function (resp) {
+        apost('/api/chat/conversations', { mode: agentMode }).then(function (resp) {
           if (resp && resp.conversation) {
             var nc = resp.conversation;
             var prov = text.trim().split(' ').slice(0, 8).join(' ').slice(0, 60);
@@ -2389,11 +2396,13 @@ const DASHBOARD_HTML = `<!doctype html>
           }
         }).catch(function () {});
       } else { doStream(currentId, text); }
-    }, [draft, currentId, doStream, loadConvos]);
+    }, [draft, currentId, doStream, loadConvos, agentMode]);
 
     var newChat = useCallback(function () {
-      apost('/api/chat/conversations', {}).then(function (resp) { if (resp && resp.conversation) { loadConvos(); setCurrentId(resp.conversation.id); } }).catch(function () {});
-    }, [loadConvos]);
+      // Clear to a fresh composer (no eager empty conversation); the agent dropdown stays editable until the
+      // first message, which creates the conversation with the selected mode.
+      setCurrentId(null); setMessages([]); setArtifact(null); setDocOpen(false); setDraft('');
+    }, []);
     var openDialog = useCallback(function (mode, c, e) {
       e.stopPropagation();
       setDialog({ mode: mode, id: c.id, title: c.title || 'New chat' });
@@ -2457,7 +2466,8 @@ const DASHBOARD_HTML = `<!doctype html>
     }
     function docPanel() {
       var build;
-      if (artifact.feasibility === 'not-possible') { build = h('div', { className: 'muted-note' }, 'Marked not feasible - refine the request before building.'); }
+      if (effMode === 'finder') { build = h('span', { className: 'muted-note' }, 'This is a Feature Finder report - open a Builder chat (New chat + the Builder agent) to design and build a specific idea.'); }
+      else if (artifact.feasibility === 'not-possible') { build = h('div', { className: 'muted-note' }, 'Marked not feasible - refine the request before building.'); }
       else if (artifact.status === 'building' || artifact.status === 'approved') { build = h('span', { className: 'muted-note' }, 'Build in progress - see the Code Autopilot tab.'); }
       else if (artifact.status === 'built') { build = h('span', { className: 'muted-note' }, 'Built - a pull request was opened.'); }
       else if (!owner) { build = h('span', { className: 'muted-note' }, 'Only the owner can approve & build this design.'); }
@@ -2521,15 +2531,24 @@ const DASHBOARD_HTML = `<!doctype html>
     var thread = h('div', { className: 'chat-thread', ref: threadRef },
       (messages.length === 0 && !streaming) ? h('div', { key: 'w', className: 'chat-welcome' }, h('h3', null, 'Design & build with Saturn'), h('p', null, 'Describe what you want to design or build. Saturn researches the whole codebase, checks feasibility, proposes options, and can open a pull request - all reviewed by you.')) : null,
       msgEls, planThreadEl, liveEl);
+    var curConv = convos.find(function (c) { return c.id === currentId; });
+    var effMode = curConv ? (curConv.mode || 'design') : agentMode;
     var docBar = (artifact && !docOpen) ? h('div', { className: 'chat-docbar' },
-      h('button', { className: 'btn sm', onClick: function () { setDocOpen(true); } }, '\ud83d\udcc4 Open design document'),
+      h('button', { className: 'btn sm', onClick: function () { setDocOpen(true); } }, '\ud83d\udcc4 ' + (effMode === 'finder' ? 'Open feature opportunities' : 'Open design document')),
       artifact.feasibility ? h('span', { className: 'feas ' + artifact.feasibility }, artifact.feasibility) : null,
       h('span', { className: 'muted-note' }, artifact.title || '')) : null;
     var composer = owner
-      ? h('div', { className: 'chat-composer' },
-        h('textarea', { className: 'chat-input', rows: 2, ref: composerRef, placeholder: 'Describe what you want to design or build...', value: draft, disabled: streaming,
-          onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
-        h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send'))
+      ? h('div', { className: 'chat-composer-outer' },
+        h('div', { className: 'chat-agentbar' },
+          h('span', { className: 'chat-agentlabel' }, 'Agent'),
+          h('select', { className: 'chat-agentsel', value: effMode, disabled: !!currentId, title: currentId ? 'The agent is fixed for an existing conversation - start a New chat to switch.' : 'Choose which agent handles this chat',
+            onChange: function (e) { setAgentMode(e.target.value); } },
+            h('option', { value: 'design' }, 'Builder - design & build a feature'),
+            h('option', { value: 'finder' }, 'Feature Finder - find high-ROI ideas'))),
+        h('div', { className: 'chat-composer' },
+          h('textarea', { className: 'chat-input', rows: 2, ref: composerRef, placeholder: (effMode === 'finder' ? 'Ask the Feature Finder for high-ROI ideas to build...' : 'Describe what you want to design or build...'), value: draft, disabled: streaming,
+            onChange: function (e) { setDraft(e.target.value); }, onKeyDown: function (e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } } }),
+          h('button', { className: 'btn chat-send', onClick: send, disabled: streaming || !draft.trim() }, streaming ? 'Sending' : 'Send')))
       : h('div', { className: 'chat-composer' }, h('span', { className: 'muted', style: { fontSize: '13px' } }, '\ud83d\udd12 Read-only view \u2014 only the owner can design & build here.'));
     var mainCol = h('div', { key: 'main', className: 'chat-col' }, h('div', { className: 'chat-head' }, currentTitle(convos, currentId)), thread, docBar, composer);
 
@@ -3706,13 +3725,15 @@ async function handleRequest(service: SaturnService, req: IncomingMessage, res: 
   if (method === 'POST' && pathname === '/api/chat/conversations') {
     if (!isOwner(req)) { sendJson(res, 403, { error: 'forbidden: Builder Autopilot is read-only for viewers' }); return; }
     const raw = await readRequestBody(req);
-    let mode: 'design' | 'spec' = 'design';
+    let mode: 'design' | 'spec' | 'finder' = 'design';
     let title = '';
     try {
       const parsed: unknown = JSON.parse(raw === '' ? '{}' : raw);
       if (isRecord(parsed)) {
         if (parsed['mode'] === 'spec') {
           mode = 'spec';
+        } else if (parsed['mode'] === 'finder') {
+          mode = 'finder';
         }
         if (typeof parsed['title'] === 'string') {
           title = parsed['title'];
