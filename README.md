@@ -54,7 +54,7 @@ The only npm runtime dependency is `zod`.
 
 ## Configuration
 
-Saturn reads its configuration from a **`.env` file** (copy [`.env.example`](.env.example) to `.env`) or from real environment variables. `config.ts` loads the first `.env` it finds — the path in `SATURN_ENV_FILE`, then the working directory, then the running bundle's directory — and never overrides variables already set in the environment. The simplest setup is **`SATURN_REPO_URL`** (the repo's URL) plus `SATURN_ADO_DEFAULT_BRANCH`; Saturn parses the org/project/repo from the URL (no GUID needed — the REST API accepts the repo name). The individual `SATURN_ADO_*` coordinates are an alternative/override; everything else has a default.
+**Quickest start:** run `npm run saturn` (or open the deployed dashboard) — when Saturn is unconfigured it serves a **setup page** (also reachable at `/setup`) that walks you through the repo URL + branch, provider, model, and reasoning effort, then restarts itself. For a headless / hosted deployment, configure it with a file instead: Saturn reads its configuration from a **`.env` file** (copy [`.env.example`](.env.example) to `.env`) or from real environment variables. `config.ts` loads the first `.env` it finds — the path in `SATURN_ENV_FILE`, then the working directory, then the running bundle's directory — and never overrides variables already set in the environment. The simplest setup is **`SATURN_REPO_URL`** (the repo's URL) plus `SATURN_ADO_DEFAULT_BRANCH`; Saturn parses the org/project/repo from the URL (no GUID needed — the REST API accepts the repo name). The individual `SATURN_ADO_*` coordinates are an alternative/override; everything else has a default.
 
 | Env var                           | Default                | Meaning                                                        |
 | --------------------------------- | ---------------------- | -------------------------------------------------------------- |
@@ -87,8 +87,9 @@ See [docs/get-started.md](docs/get-started.md) for the full list and examples.
 - `npm run build` — typecheck (`tsc --noEmit`)
 - `npm test` — unit tests (jest)
 - `npm run lint` — eslint
-- `npm run saturn` — run the dashboard locally (via `tsx`)
+- `npm run saturn` (alias `npm run dashboard`) — run the dashboard locally (via `tsx`)
 - `npm run review` — one-shot CLI review (`--help` for flags)
+- `npm run fix` — run **Code Autopilot**, the standalone bug-fix loop (`--help` for the `SATURN_FIX_*` options)
 - `npm run deploy` — bundle (esbuild) to `SATURN_DEPLOY_DIR` and register Windows logon autostart
 
 ## Deploy
