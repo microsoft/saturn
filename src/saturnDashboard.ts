@@ -167,10 +167,11 @@ function readRequestBody(req: IncomingMessage): Promise<string> {
   });
 }
 
-/** Per-PR model timeout in ms. Defaults to 15 minutes; full-file reviews of large/complex PRs need it. */
+/** Per-PR (and audit-batch) model timeout in ms. Generous 30-min cap by default (above the old 15-min value)
+ * so long agentic reviews are never cut off, while still bounding a genuine hang; override with SATURN_TIMEOUT_MS. */
 function resolveTimeoutMs(): number {
   const raw = Number.parseInt(process.env.SATURN_TIMEOUT_MS ?? '', 10);
-  return Number.isNaN(raw) || raw <= 0 ? 900_000 : raw;
+  return Number.isNaN(raw) || raw <= 0 ? 1_800_000 : raw;
 }
 
 function buildConfig(): SaturnServiceConfig {

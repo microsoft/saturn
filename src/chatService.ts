@@ -42,8 +42,11 @@ function chatEffort(): string {
 }
 
 function chatTimeoutMs(): number {
+    // Generous 30-min per-invocation cap: a design turn (research + multi-pass todo plan at max effort on a
+    // large repo) can run long, so this stays well above the old 10-min value while still bounding a genuine
+    // hang. Override with SATURN_CHAT_TIMEOUT_MS (a positive value).
     const parsed = Number.parseInt(process.env.SATURN_CHAT_TIMEOUT_MS ?? '', 10);
-    return Number.isNaN(parsed) || parsed <= 0 ? 600_000 : parsed;
+    return Number.isNaN(parsed) || parsed <= 0 ? 1_800_000 : parsed;
 }
 
 // --- lazily-resolved, cached build environment (CLI + clone + optional ADO MCP) --------------------------

@@ -732,10 +732,14 @@ export function fixMaxIterations(): number {
   return Number.isNaN(parsed) || parsed <= 0 ? 5 : parsed;
 }
 
-/** Per Copilot fix-invocation timeout (ms). A fix can take a while; default 20 min. SATURN_FIX_TIMEOUT_MS. */
+/**
+ * Per Copilot fix / feature-build invocation timeout (ms). Generous 30-min cap by default (above the old
+ * 20-min value) so a long agentic build step is never cut off, while still bounding a genuine hang. Override
+ * with SATURN_FIX_TIMEOUT_MS (a positive value).
+ */
 export function fixTimeoutMs(): number {
   const parsed = Number.parseInt(process.env.SATURN_FIX_TIMEOUT_MS ?? '', 10);
-  return Number.isNaN(parsed) || parsed <= 0 ? 1_200_000 : parsed;
+  return Number.isNaN(parsed) || parsed <= 0 ? 1_800_000 : parsed;
 }
 
 /**

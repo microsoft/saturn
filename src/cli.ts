@@ -38,7 +38,7 @@ OPTIONS
   --with-ado-mcp         Register and allow the Azure DevOps MCP server for extra context.
   --force                Re-review PRs even if the bot already commented.
   --update               Refresh the managed clone's master (git fetch + ff-only) before reviewing (default: reuse existing checkout).
-  --timeout-ms <n>       Per-PR model timeout in ms (default: 900000).
+  --timeout-ms <n>       Per-PR model timeout in ms (default: 1800000 = 30 min).
   --repo-root <path>     Target repo checkout to use (default: current git repo root).
   --managed-clone        Use a dedicated clone (auto-on when run outside the repo).
   --no-managed-clone     Always use the current directory's repo instead of a managed clone.
@@ -159,6 +159,6 @@ export function parseCliOptions(argv: readonly string[]): SaturnOptions | undefi
     cloneDir: valueFlags.get('clone-dir'),
     installDeps: booleanFlags.has('install-deps'),
     specificPullRequestId,
-    reviewTimeoutMs: readIntFlag(valueFlags, 'timeout-ms', 900_000)
+    reviewTimeoutMs: readIntFlag(valueFlags, 'timeout-ms', 1_800_000)
   };
 }
