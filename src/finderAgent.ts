@@ -170,9 +170,9 @@ export async function runFinderTurn(
             ? { designDoc: { title: meta.designDoc.title, markdown: meta.designDoc.markdown } }
             : {}),
         ...(meta !== undefined &&
-        meta.suggestedTitle !== null &&
-        meta.suggestedTitle !== undefined &&
-        meta.suggestedTitle.trim() !== ''
+            meta.suggestedTitle !== null &&
+            meta.suggestedTitle !== undefined &&
+            meta.suggestedTitle.trim() !== ''
             ? { suggestedTitle: meta.suggestedTitle.trim() }
             : {})
     };
