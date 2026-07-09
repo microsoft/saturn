@@ -213,6 +213,8 @@ const DASHBOARD_HTML = `<!doctype html>
     --panel-3: #16204a;
     --border: #243154;
     --border-soft: #1b2645;
+    --line: #232a44;
+    --input-bg: #0d1430;
     --text: #e9ecf7;
     --muted: #9aa3c4;
     --muted-2: #6c759c;
@@ -235,6 +237,8 @@ const DASHBOARD_HTML = `<!doctype html>
     --panel-3: #eef1fb;
     --border: #d3d9ec;
     --border-soft: #e4e8f5;
+    --line: #d3d9ec;
+    --input-bg: #ffffff;
     --text: #1a2138;
     --muted: #55608a;
     --muted-2: #7b85ab;
